@@ -49,8 +49,10 @@ public sealed class InternalWatchlistScreeningProvider : IScreeningProvider
                 var mode = status.SimulationMode;
                 if (status.SimulatedFailuresRemaining > 0)
                 {
+                    // Count-based simulation: fail N times, then the provider recovers automatically.
                     status.SimulatedFailuresRemaining--;
                     if (mode == "Normal") mode = "Unavailable";
+                    if (status.SimulatedFailuresRemaining == 0) { status.SimulationMode = "Normal"; status.IsAvailable = true; }
                     await db.SaveChangesAsync(ct);
                 }
                 else if (mode is "FailTimes") mode = "Normal";

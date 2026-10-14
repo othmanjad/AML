@@ -138,6 +138,8 @@ public sealed class RealtimeService
     private async Task<(string Decision, List<string> Reasons, long? CustomerId, string? Rules, string? Screening)> EvaluateAsync(DecideRequest r, string source, long tenantId, CancellationToken ct)
     {
         await Task.Yield();
+        // Separate scope (the request DbContext is not thread-safe under the latency timeout); queries below filter
+        // by tenant explicitly because the new scope has no authenticated user context.
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IAmlDbContext>();
         var settings = scope.ServiceProvider.GetRequiredService<TenantSettingsService>();
@@ -189,16 +191,16 @@ public sealed class RealtimeService
         }
 
         // 2. Real-time-capable rules using pre-computed aggregates (no historical scans inline).
-        var senderId = r.SenderWallet is null ? null : await db.Set<Wallet>().AsNoTracking().Where(w => w.SourceSystem == source && w.ExternalWalletId == r.SenderWallet).Select(w => w.CustomerId).FirstOrDefaultAsync(ct);
+        var senderId = r.SenderWallet is null ? null : await db.Set<Wallet>().IgnoreQueryFilters().AsNoTracking().Where(w => w.TenantId == tenantId && w.SourceSystem == source && w.ExternalWalletId == r.SenderWallet).Select(w => w.CustomerId).FirstOrDefaultAsync(ct);
         var tenant = await settings.TenantAsync(tenantId, ct);
         var now = r.EventTime?.ToUniversalTime() ?? _clock.UtcNow;
         var conv = await fx.ConvertAsync(tenantId, r.Amount, r.Currency.ToUpperInvariant(), tenant.BaseCurrency, now, ct);
         var tz = TimeZoneInfo.FindSystemTimeZoneById(tenant.TimeZone);
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, tz));
-        var agg = senderId is null ? null : await db.Set<CustomerDailyAggregate>().AsNoTracking().FirstOrDefaultAsync(a => a.CustomerId == senderId && a.BusinessDate == today && a.Direction == "Out", ct);
-        var rules = await (from v in db.Set<AmlRuleVersion>().AsNoTracking()
-                           join rr in db.Set<AmlRule>().AsNoTracking() on v.RuleId equals rr.Id
-                           where v.Status == ConfigStatus.Active && rr.IsRealtimeCapable && v.EffectiveFrom <= now && (v.EffectiveTo == null || v.EffectiveTo > now)
+        var agg = senderId is null ? null : await db.Set<CustomerDailyAggregate>().IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync(a => a.TenantId == tenantId && a.CustomerId == senderId && a.BusinessDate == today && a.Direction == "Out", ct);
+        var rules = await (from v in db.Set<AmlRuleVersion>().IgnoreQueryFilters().AsNoTracking()
+                           join rr in db.Set<AmlRule>().IgnoreQueryFilters().AsNoTracking() on v.RuleId equals rr.Id
+                           where v.TenantId == tenantId && v.Status == ConfigStatus.Active && rr.IsRealtimeCapable && v.EffectiveFrom <= now && (v.EffectiveTo == null || v.EffectiveTo > now)
                            select new { rr.Code, v.Version, v.DefinitionJson }).ToListAsync(ct);
         var evaluated = new List<string>();
         foreach (var rule in rules)

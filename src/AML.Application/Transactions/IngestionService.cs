@@ -321,6 +321,9 @@ public sealed class IngestionService
                ?? (new[] { "Pending", "Completed", "Failed", "Reversed", "PartiallyReversed" }.FirstOrDefault(s => s.Equals(sourceStatus, StringComparison.OrdinalIgnoreCase)) ?? "Unknown");
     }
 
+    /// <summary>Version of the party-resolution rule set (stored with every resolution for traceability).</summary>
+    public const string PartyResolutionRuleVersion = "PR-1";
+
     private async Task ResolvePartiesAsync(Transaction t, CancellationToken ct)
     {
         var at = t.TimestampUtc;
@@ -331,7 +334,7 @@ public sealed class IngestionService
         foreach (var side in new[] { "Sender", "Receiver" })
         {
             var ext = side == "Sender" ? t.SenderWalletExternalId : t.ReceiverWalletExternalId;
-            var res = new TransactionPartyResolution { TenantId = t.TenantId, TransactionId = t.Id, Side = side, OriginalWalletExternalId = ext, ResolvedAt = _clock.UtcNow };
+            var res = new TransactionPartyResolution { TenantId = t.TenantId, TransactionId = t.Id, Side = side, OriginalWalletExternalId = ext, ResolvedAt = _clock.UtcNow, RuleVersion = PartyResolutionRuleVersion };
             var mapping = mappings.FirstOrDefault(w => w.ExternalWalletId == ext);
             if (ext is null)
             {
@@ -340,7 +343,7 @@ public sealed class IngestionService
             else if (mapping is not null)
             {
                 res.Method = "InternalWalletCounterLeg";
-                res.RuleVersion = $"PR-1/WM-{mapping.Id}v{mapping.RuleVersion}";
+                res.RuleVersion = $"{PartyResolutionRuleVersion}/WM-{mapping.Id}v{mapping.RuleVersion}";
                 // Find the counter leg through the internal wallet by shared reference.
                 var counter = t.OriginalReference is null ? null : await _db.Set<Transaction>().Where(o => o.Id != t.Id && o.SourceSystem == t.SourceSystem &&
                     o.OriginalReference == t.OriginalReference && (side == "Receiver" ? o.SenderWalletExternalId == ext : o.ReceiverWalletExternalId == ext)).FirstOrDefaultAsync(ct);
