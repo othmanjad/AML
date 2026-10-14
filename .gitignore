@@ -1,0 +1,14 @@
+bin/
+obj/
+node_modules/
+dist/
+*.user
+.vs/
+.idea/
+TestResults/
+test-results/
+playwright-report/
+/data/
+.env
+*.trx
+src/AML.Web/e2e/.auth/
