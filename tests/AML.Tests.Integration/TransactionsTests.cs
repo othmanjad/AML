@@ -270,6 +270,17 @@ public class TransactionsTests : AmlTestBase
         Actual($"Run {run["id"]}: batch {run["batchId"]}, received {run["receivedAt"]}, status {run["status"]}, correlation {run["correlationId"]}; record attempts {rec.AttemptCount}, last error '{rec.LastError}', payload SHA-256 {rec.PayloadHash[..12]}…; transaction linked to run.");
     }
 
+    [Fact, Tc("AML-TC-0082")]
+    public async Task Failed_searchable()
+    {
+        var a = await Party(); var b = await Party();
+        var t = U("T");
+        await Ingest(Txn(t, a.Wallet, b.Wallet, 10, Now, status: "FAIL"));
+        var r = await (await As("manager")).GetOk($"/api/transactions?status=Failed&reference=&pageSize=200&customerId={a.Customer}");
+        r["items"]!.AsArray().Should().Contain(i => i!["sourceTransactionId"]!.GetValue<string>() == t);
+        Actual("FAIL normalized to Failed; searchable by status filter; excluded from completed-activity aggregates by default (see TC-RUL-012).");
+    }
+
     [Fact, Tc("TC-ING-009", "AML-TC-0080")]
     public async Task Source_status_preserved()
     {

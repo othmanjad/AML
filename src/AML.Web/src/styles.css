@@ -1,0 +1,212 @@
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: #f4f6fa;
+  color: #1f2329;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  overflow-x: hidden;
+}
+.app-sider {
+  border-inline-end: 1px solid #e5e8ef;
+  position: sticky !important;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 20;
+}
+.brand {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  border-bottom: 1px solid #eef0f4;
+}
+.brand a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: #12305f;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.app-header {
+  background: #fff !important;
+  border-bottom: 1px solid #e5e8ef;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 16px !important;
+  height: auto !important;
+  min-height: 56px;
+  line-height: normal !important;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.header-user {
+  color: #44505f;
+  white-space: nowrap;
+}
+.app-content {
+  padding: 20px;
+  min-width: 0;
+}
+.page {
+  max-width: 1600px;
+  margin: 0 auto;
+  min-width: 0;
+}
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.data-table {
+  background: #fff;
+  border-radius: 8px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.data-table .ant-table-wrapper {
+  max-width: 100%;
+}
+.filter-grid,
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  column-gap: 12px;
+}
+.form-grid {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.filter-bar .ant-form-item {
+  margin-bottom: 10px;
+}
+.json-block {
+  background: #f6f8fa;
+  border: 1px solid #e5e8ef;
+  border-radius: 6px;
+  padding: 10px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  direction: ltr;
+  text-align: left;
+}
+.mono,
+.mono textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+  direction: ltr;
+  text-align: left;
+}
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: linear-gradient(135deg, #eaf1fb 0%, #f7f9fc 100%);
+  position: relative;
+}
+.login-card {
+  width: 100%;
+  max-width: 420px;
+}
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.row-uncovered td {
+  background: #fff1f0 !important;
+}
+.row-overdue td {
+  background: #fff7e6 !important;
+}
+.chain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.chain-step {
+  border-inline-start: 3px solid #1f5fbf;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  background: #fff;
+  border-radius: 4px;
+}
+.chain-step.current {
+  background: #eaf1fb;
+}
+.cond-group {
+  border: 1px solid #d6dbe4;
+  border-inline-start: 3px solid #1f5fbf;
+  border-radius: 6px;
+  padding: 10px;
+  margin: 6px 0;
+  background: #fbfcfe;
+}
+.cond-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 6px 0;
+}
+.cond-row .ant-form-item {
+  margin-bottom: 0;
+}
+.matrix td,
+.matrix th {
+  text-align: center;
+}
+@media (max-width: 768px) {
+  .app-content {
+    padding: 12px;
+  }
+  .header-title {
+    display: none;
+  }
+}
+.sr-label {
+  display: block;
+  font-size: 12px;
+  color: #4a5361;
+  margin-bottom: 4px;
+}
+/* Wrapping tab bar (no hidden overflow menu) so every tab label stays reachable. */
+.wrap-tabs > .ant-tabs-nav .ant-tabs-nav-wrap {
+  overflow: visible !important;
+}
+.wrap-tabs > .ant-tabs-nav .ant-tabs-nav-list {
+  flex-wrap: wrap;
+  transform: none !important;
+}
+.wrap-tabs > .ant-tabs-nav .ant-tabs-nav-operations,
+.wrap-tabs > .ant-tabs-nav .ant-tabs-ink-bar {
+  display: none !important;
+}
+.wrap-tabs > .ant-tabs-nav .ant-tabs-tab {
+  margin: 0 !important;
+  padding: 8px 12px;
+  border-bottom: 2px solid transparent;
+}
+.wrap-tabs > .ant-tabs-nav .ant-tabs-tab-active {
+  border-bottom-color: #1f5fbf;
+}

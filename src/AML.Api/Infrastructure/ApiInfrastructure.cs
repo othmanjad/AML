@@ -115,6 +115,9 @@ public sealed class CorrelationMiddleware
         corr.CorrelationId = incoming is not null && Valid.IsMatch(incoming) ? incoming : Guid.NewGuid().ToString("N");
         corr.ClientIp = ctx.Connection.RemoteIpAddress?.ToString();
         ctx.Response.Headers["X-Correlation-ID"] = corr.CorrelationId;
+        var id = corr.CorrelationId;
+        // Re-applied on start so error responses (which clear headers) still carry the correlation ID.
+        ctx.Response.OnStarting(() => { ctx.Response.Headers["X-Correlation-ID"] = id; return Task.CompletedTask; });
         using (LogContext.PushProperty("CorrelationId", corr.CorrelationId))
             await _next(ctx);
     }

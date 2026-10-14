@@ -221,7 +221,7 @@ public class RuleWorkflowTests : RuleTestBase
         Actual("Re-ingested the same transaction and reran the rule 3 times → exactly one alert (deduplicated by rule+version+subject+day key; DB unique index).");
     }
 
-    [Fact, Tc("TC-ALR-003")]
+    [Fact, Tc("TC-ALR-003", "AML-TC-0112")]
     public async Task New_window_new_alert()
     {
         var ch = Channel();
@@ -572,7 +572,7 @@ public class CaseWorkflowTests : RuleTestBase
         Actual("Task assigned to investigator appears in their queue with due date; past due flagged overdue.");
     }
 
-    [Fact, Tc("AML-TC-0169", "AML-TC-0170", "AML-TC-0171")]
+    [Fact, Tc("AML-TC-0169", "AML-TC-0170", "AML-TC-0171", "AML-TC-0242")]
     public async Task Restricted_case_visibility()
     {
         var cust = await CreateCustomer();

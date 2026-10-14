@@ -344,6 +344,15 @@ public class RuleEngineTests
         Actual("Real-time capable rule using a non-precomputable aggregate rejected: " + errors[0].Message);
     }
 
+    [Fact, Tc("AML-TC-0130")]
+    public void Distinct_counterparties_ignore_duplicates()
+    {
+        var d = Def("""{"window":{"type":"Rolling","hours":24},"condition":{"aggregate":"distinctCounterparties","direction":"in","operator":"gte","value":5}}""");
+        var txns = new[] { 200, 201, 202, 203, 203, 203 }.Select((s, i) => Tx(T0.AddMinutes(i), 10, "in", sender: s, receiver: 1)).ToList();
+        Run(d, txns).Matches.Should().BeEmpty();
+        Actual("6 incoming transactions from 4 distinct senders (one sender repeated 3×) → distinct count 4, no match for ≥5 (duplicates not double-counted).");
+    }
+
     [Fact, Tc("AML-TC-0116")]
     public void One_sender_many_receivers()
     {
