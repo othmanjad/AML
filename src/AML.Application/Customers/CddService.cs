@@ -193,17 +193,20 @@ public sealed class CddService
         {
             decision = "PendingInformation"; reasons.Add("RISK_NOT_ASSESSED");
         }
-        else if (policy.RequireCompleteKyc && gaps.Count > 0)
-        {
-            decision = "PendingInformation"; reasons.Add("KYC_INCOMPLETE");
-        }
         else if (policy.PepRequiresSeniorApproval && c.IsPep)
         {
+            // Senior management approval is required for PEPs; outstanding EDD/KYC items are listed with the decision.
             decision = "PendingSeniorApproval"; reasons.Add("PEP_SENIOR_APPROVAL");
+            if (gaps.Count > 0) reasons.Add("EDD_ITEMS_OUTSTANDING");
         }
         else if (RiskScoringEngine.Split(policy.SeniorApprovalRiskLevels).Contains(profile.Level))
         {
             decision = "PendingSeniorApproval"; reasons.Add("RISK_" + profile.Level.ToUpperInvariant());
+            if (gaps.Count > 0) reasons.Add("EDD_ITEMS_OUTSTANDING");
+        }
+        else if (policy.RequireCompleteKyc && gaps.Count > 0)
+        {
+            decision = "PendingInformation"; reasons.Add("KYC_INCOMPLETE");
         }
         else if (RiskScoringEngine.Split(policy.ConditionalRiskLevels).Contains(profile.Level))
         {
@@ -275,6 +278,26 @@ public sealed class CddService
     {
         await _customers.LoadVisibleAsync(customerId, ct);
         return (await _db.Set<CustomerAcceptanceDecision>().AsNoTracking().Where(d => d.CustomerId == customerId).OrderByDescending(d => d.Id).ToListAsync(ct)).Select(ToDto).ToList();
+    }
+
+    /// <summary>Creates a KYC-refresh task for each customer holding an expired identification or document (once per customer while open).</summary>
+    public async Task<int> CreateKycRefreshTasksAsync(long tenantId, CancellationToken ct)
+    {
+        var today = DateOnly.FromDateTime(_clock.UtcNow);
+        var expiredIds = await _db.Set<CustomerIdentification>().IgnoreQueryFilters().Where(i => i.TenantId == tenantId && i.ExpiryDate != null && i.ExpiryDate < today).Select(i => i.CustomerId).ToListAsync(ct);
+        var expiredDocs = await _db.Set<CustomerDocument>().IgnoreQueryFilters().Where(d => d.TenantId == tenantId && d.ExpiryDate != null && d.ExpiryDate < today).Select(d => d.CustomerId).ToListAsync(ct);
+        var created = 0;
+        foreach (var cid in expiredIds.Concat(expiredDocs).Distinct())
+        {
+            if (await _db.Set<EddTask>().IgnoreQueryFilters().AnyAsync(t => t.CustomerId == cid && t.TaskType == "KycRefresh" && t.Status != "Completed", ct)) continue;
+            _db.Set<EddTask>().Add(new EddTask { TenantId = tenantId, CustomerId = cid, LevelCode = "KYC", TaskType = "KycRefresh", Description = "Expired identification/document: obtain updated KYC evidence", CreatedAt = _clock.UtcNow });
+            var c = await _db.Set<Customer>().IgnoreQueryFilters().FirstAsync(x => x.Id == cid, ct);
+            c.KycStatus = "Expired";
+            _audit.Record("KYC_REFRESH_TASK", "Customer", cid.ToString(CultureInfo.InvariantCulture), null, new { reason = "expired document" });
+            created++;
+        }
+        await _db.SaveChangesAsync(ct);
+        return created;
     }
 
     // ---------------- relationship exit ----------------

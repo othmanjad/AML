@@ -419,7 +419,7 @@ public sealed class RiskAssessmentService
     {
         var m = await LoadGraphAsync(methodologyId, ct);
         if (m.TenantId != _user.TenantId) throw new NotFoundException("Methodology", methodologyId);
-        var at = asOf ?? _clock.UtcNow;
+        var at = asOf ?? (m.EffectiveFrom > _clock.UtcNow ? m.EffectiveFrom : _clock.UtcNow);
         Dictionary<string, FactorInput> factorInputs;
         string type;
         if (customerId is { } cid)
@@ -452,7 +452,9 @@ public sealed class RiskAssessmentService
                 };
             }
         }
-        var r = _engine.Evaluate(m, type, factorInputs, at);
+        RiskEngineResult r;
+        try { r = _engine.Evaluate(m, type, factorInputs, at); }
+        catch (InvalidOperationException ex) { throw new ConflictException("Simulation not possible: " + ex.Message); }
         return new SimulationResultDto(m.Code, m.Version, m.AggregationMethod, type, r.CalculatedScore, r.CalculatedLevel, r.FinalLevel, r.MandatoryOverrideLevel,
             r.AppliedOverrides, r.AppliedFloors, r.SanctionsWorkflow, r.RequiresApproval, r.HasMissingData, r.Warnings, r.CategoryScores,
             r.Factors.Select(ToDto).ToList(), m.Thresholds.OrderBy(t => t.MinScore).Select(t => (object)new { t.Level, t.MinScore, t.MaxScore, t.ReviewMonths, t.IsSample }).ToList(),

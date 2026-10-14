@@ -118,16 +118,19 @@ public sealed class ReportService
                 var levels = await _db.Set<DueDiligenceLevelDefinition>().IgnoreQueryFilters().AsNoTracking().Where(l => l.TenantId == tenantId).ToListAsync(ct);
                 var values = (await _db.Set<CustomerFieldValue>().IgnoreQueryFilters().AsNoTracking().Where(v => v.TenantId == tenantId && v.EffectiveTo == null).Select(v => new { v.CustomerId, v.FieldCode }).ToListAsync(ct))
                     .GroupBy(v => v.CustomerId).ToDictionary(g => g.Key, g => g.Select(x => x.FieldCode).ToHashSet());
+                var withIds = (await _db.Set<CustomerIdentification>().IgnoreQueryFilters().AsNoTracking().Where(i => i.TenantId == tenantId).Select(i => i.CustomerId).Distinct().ToListAsync(ct)).ToHashSet();
+                var defs = await _db.Set<CustomerFieldDefinition>().IgnoreQueryFilters().AsNoTracking().Where(d => d.TenantId == tenantId && d.Status == ConfigStatus.Published).ToListAsync(ct);
                 var rows = new List<Dictionary<string, object?>>();
                 foreach (var e in expired) rows.Add(Row(("CustomerId", e.CustomerId), ("Gap", $"Expired identification {e.IdType}"), ("Date", e.ExpiryDate)));
                 foreach (var d in docs) rows.Add(Row(("CustomerId", d.CustomerId), ("Gap", $"Expired document {d.DocumentType}"), ("Date", d.ExpiryDate)));
                 foreach (var c in ids)
                 {
                     if (c.CustomerType != CustomerTypes.Individual && !owners.Contains(c.Id)) rows.Add(Row(("CustomerId", c.Id), ("Gap", "Missing beneficial ownership information"), ("Date", null)));
+                    if (c.CustomerType == CustomerTypes.Individual && !withIds.Contains(c.Id)) rows.Add(Row(("CustomerId", c.Id), ("Gap", "No identification document recorded"), ("Date", null)));
                     var lvl = levels.FirstOrDefault(l => l.Code == (c.DueDiligenceLevel ?? "CDD"));
                     if (lvl is null) continue;
                     var have = values.GetValueOrDefault(c.Id) ?? new HashSet<string>();
-                    foreach (var fcode in lvl.RequiredFieldCodes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(x => !have.Contains(x)))
+                    foreach (var fcode in lvl.RequiredFieldCodes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(x => !have.Contains(x) && defs.Any(d => d.Code == x && d.AppliesTo(c.CustomerType))))
                         rows.Add(Row(("CustomerId", c.Id), ("Gap", $"Missing {lvl.Code} field {fcode}"), ("Date", null)));
                 }
                 return new ReportTable(code, title, new[] { "CustomerId", "Gap", "Date" }, rows);

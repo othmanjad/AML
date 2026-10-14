@@ -41,6 +41,7 @@ public static class JobCatalog
         new("str-sla", TimeSpan.FromMinutes(15), true, (sp, t, ct) => sp.GetRequiredService<RegulatoryReportService>().CheckSlasAsync(t, ct)),
         new("authority-overdue", TimeSpan.FromHours(1), true, (sp, t, ct) => sp.GetRequiredService<AuthorityRequestService>().MarkOverdueAsync(t, ct)),
         new("alert-sla", TimeSpan.FromMinutes(15), true, (sp, t, ct) => sp.GetRequiredService<AlertService>().MarkOverdueAsync(t, ct)),
+        new("kyc-expiry", TimeSpan.FromHours(12), true, (sp, t, ct) => sp.GetRequiredService<AML.Application.Customers.CddService>().CreateKycRefreshTasksAsync(t, ct)),
         new("entity-resolution", TimeSpan.FromHours(6), true, async (sp, t, ct) => { await sp.GetRequiredService<EntityResolutionService>().RunAsync(t, ct); return 1; }),
     };
 }

@@ -74,7 +74,7 @@ public static class FieldValueValidator
                         scale = (decimal.GetBits(normalized)[3] >> 16) & 0x7F;
                         if (cfg.Scale is { } s && scale > s) return (null, $"{label}: at most {s} decimal places are allowed.");
                         var integerDigits = Math.Truncate(Math.Abs(d)).ToString(CultureInfo.InvariantCulture).TrimStart('0').Length;
-                        if (cfg.Precision is { } prec && integerDigits + Math.Min(scale, cfg.Scale ?? scale) > prec)
+                        if (cfg.Precision is { } prec && integerDigits + (cfg.Scale ?? scale) > prec)
                             return (null, $"{label}: precision exceeds {prec} digits.");
                     }
                     return (new ParsedFieldValue { Number = d, Display = d.ToString(CultureInfo.InvariantCulture) }, null);

@@ -557,7 +557,7 @@ public sealed class CustomerService
     private static string? DisplayForHistory(CustomerFieldValue v, CustomerFieldDefinition def)
     {
         if (v.ValueEncrypted is not null || def.IsSensitive) return v.MaskedDisplay;
-        return v.ValueNumber?.ToString(CultureInfo.InvariantCulture) ?? v.ValueDate?.ToString("yyyy-MM-dd") ?? v.ValueBool?.ToString().ToLowerInvariant() ?? v.ValueJson ?? v.ValueText;
+        return v.ValueNumber?.ToString("0.##########", CultureInfo.InvariantCulture) ?? v.ValueDate?.ToString("yyyy-MM-dd") ?? v.ValueBool?.ToString().ToLowerInvariant() ?? v.ValueJson ?? v.ValueText;
     }
 
     public async Task<List<CustomerFieldChangeHistory>> AttributeHistoryAsync(long customerId, string? fieldCode, CancellationToken ct)
