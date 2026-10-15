@@ -8,18 +8,19 @@ public static class RuleValidator
 {
     public const int MaxDepth = 6;
     public const int MaxNodes = 50;
-    private static readonly string[] Subjects = { "Customer", "Agent", "Device" };
+    private static readonly string[] SignalEvents = { "Registration", "Login", "SimChange", "PhoneChange", "EmailChange", "AddressChange", "PasswordReset", "BeneficiaryAdded", "DeviceChangeApproved" };
+    private static readonly string[] Subjects = { "Customer", "Wallet", "Agent", "Device", "Entity" };
     private static readonly string[] DedupComponents = { "rule", "version", "subject", "day", "window", "evidenceGroup" };
     private static readonly string[] Severities = { "Low", "Medium", "High", "Critical" };
     private static readonly string[] Statuses = { "Pending", "Completed", "Failed", "Reversed", "PartiallyReversed", "Held" };
     private static readonly string[] AllowedRootProperties =
     {
-        "subject", "scope", "eligibleStatuses", "reversalHandling", "window", "condition", "dedupKey", "action", "realtimeCapable", "lookbackDays"
+        "subject", "scope", "eligibleStatuses", "reversalHandling", "window", "condition", "dedupKey", "action", "realtimeCapable", "lookbackDays", "unresolvedParties", "entityMinConfidence", "applicability"
     };
     private static readonly string[] AllowedNodeProperties =
     {
         "op", "conditions", "field", "operator", "value", "aggregate", "filter", "numerator", "denominator", "measure", "direction",
-        "maxMinutes", "profileField", "peerGroup", "maxDepth", "label"
+        "maxMinutes", "profileField", "peerGroup", "maxDepth", "label", "of", "dailyRange", "event"
     };
 
     /// <summary>Validates raw JSON (structure, unknown properties) and the typed model.</summary>
@@ -47,6 +48,16 @@ public static class RuleValidator
                 if (!AllowedRootProperties.Contains(p.Name, StringComparer.OrdinalIgnoreCase))
                     errors.Add(new RuleValidationError($"$.{p.Name}", $"Unknown property '{p.Name}'."));
             if (doc.RootElement.TryGetProperty("condition", out var c)) CheckNodeProperties(c, "$.condition", errors, 0);
+            if (doc.RootElement.TryGetProperty("applicability", out var ap)) CheckNodeProperties(ap, "$.applicability", errors, 0);
+            if (doc.RootElement.TryGetProperty("action", out var act) && act.ValueKind == JsonValueKind.Object && act.TryGetProperty("indicators", out var inds) && inds.ValueKind == JsonValueKind.Array)
+            {
+                var i = 0;
+                foreach (var ind in inds.EnumerateArray())
+                {
+                    if (ind.ValueKind == JsonValueKind.Object && ind.TryGetProperty("condition", out var ic)) CheckNodeProperties(ic, $"$.action.indicators[{i}].condition", errors, 0);
+                    i++;
+                }
+            }
         }
 
         RuleDefinition? def;
@@ -89,6 +100,8 @@ public static class RuleValidator
     {
         var errors = new List<RuleValidationError>();
         if (!Subjects.Contains(def.Subject)) errors.Add(new("$.subject", $"Unsupported subject '{def.Subject}'. Allowed: {string.Join(", ", Subjects)}."));
+        if (def.EntityMinConfidence is < 0.5m or > 1m) errors.Add(new("$.entityMinConfidence", "entityMinConfidence must be between 0.5 and 1."));
+        if (def.UnresolvedParties is not ("Ignore" or "Wallet")) errors.Add(new("$.unresolvedParties", "Allowed values: Ignore, Wallet."));
         if (def.ReversalHandling is not ("Net" or "Exclude" or "Include")) errors.Add(new("$.reversalHandling", "Allowed values: Net, Exclude, Include."));
         foreach (var s in def.EligibleStatuses ?? new())
             if (!Statuses.Contains(s)) errors.Add(new("$.eligibleStatuses", $"Unknown status '{s}'."));
@@ -111,6 +124,23 @@ public static class RuleValidator
         if (def.Action?.ComplianceAction is { } ca && actionTypes is not null && !actionTypes.Contains(ca))
             errors.Add(new("$.action.complianceAction", $"Unknown compliance action '{ca}'."));
 
+        for (var i = 0; i < (def.Action?.Indicators?.Count ?? 0); i++)
+        {
+            var ind = def.Action!.Indicators![i];
+            var path = $"$.action.indicators[{i}]";
+            if (string.IsNullOrWhiteSpace(ind.Label) || ind.Label.Length > 100) errors.Add(new(path + ".label", "Indicator label is required (max 100 characters)."));
+            if (ind.Severity is { } isev && !Severities.Contains(isev)) errors.Add(new(path + ".severity", $"Unknown severity '{isev}'."));
+            if (ind.SeverityMode is not ("Raise" or "Set")) errors.Add(new(path + ".severityMode", "severityMode must be Raise or Set."));
+            if (ind.SeverityMode == "Set" && ind.Severity is null) errors.Add(new(path + ".severity", "severityMode Set requires a severity."));
+            if (ind.Condition is null) { errors.Add(new(path + ".condition", "Indicator condition is required.")); continue; }
+            var c = 0; var agg = false;
+            ValidateNode(ind.Condition, path + ".condition", 1, dynamicFieldTypes, errors, ref c, ref agg, def, inFilter: false);
+        }
+        if (def.Applicability is not null)
+        {
+            var c = 0; var agg = false;
+            ValidateNode(def.Applicability, "$.applicability", 1, dynamicFieldTypes, errors, ref c, ref agg, def, inFilter: false);
+        }
         if (def.Condition is null) errors.Add(new("$.condition", "A condition is required."));
         else
         {
@@ -185,7 +215,24 @@ public static class RuleValidator
                     break;
                 case "dormancyDays":
                 case "newCountries":
+                case "historyCount":
+                case "historySum":
+                case "historyRatio":
+                case "newCounterpartyShare":
+                case "typeShareChange":
                     if (def.LookbackDays <= 0) errors.Add(new("$.lookbackDays", $"Aggregate '{n.Aggregate}' requires lookbackDays > 0."));
+                    break;
+                case "distinctCount":
+                    if (n.Of is not ("channel" or "device" or "sourceCountry" or "destinationCountry" or "country" or "type" or "counterparty"))
+                        errors.Add(new(path + ".of", "distinctCount requires of: channel, device, sourceCountry, destinationCountry, country, type or counterparty."));
+                    break;
+                case "consecutiveDays":
+                    if (n.DailyRange is not { Count: 2 } r || r[0] > r[1]) errors.Add(new(path + ".dailyRange", "consecutiveDays requires dailyRange [min, max]."));
+                    if (def.LookbackDays <= 0) errors.Add(new("$.lookbackDays", "consecutiveDays requires lookbackDays > 0."));
+                    break;
+                case "minutesSinceEvent":
+                    if (n.Event is null || !(n.Event is "NewDevice" or "NewLoginCountry" || SignalEvents.Contains(n.Event)))
+                        errors.Add(new(path + ".event", $"minutesSinceEvent requires event: NewDevice, NewLoginCountry or one of {string.Join(", ", SignalEvents)}."));
                     break;
                 case "customersPerDevice":
                     if (def.Subject != "Device") errors.Add(new(path, "customersPerDevice requires subject Device."));

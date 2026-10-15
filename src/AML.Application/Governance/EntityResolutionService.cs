@@ -87,11 +87,16 @@ public sealed class EntityResolutionService
         return new { created, ruleVersion = RuleVersion };
     }
 
-    public async Task<CustomerDeviceSignal> AddSignalAsync(long customerId, string deviceId, string? ip, string eventType, DateTime? at, CancellationToken ct)
+    /// <summary>Signal event types used by monitoring rules (minutesSinceEvent aggregate).</summary>
+    public static readonly string[] SignalEventTypes = { "Registration", "Login", "SimChange", "PhoneChange", "EmailChange", "AddressChange", "PasswordReset", "BeneficiaryAdded", "DeviceChangeApproved" };
+
+    public async Task<CustomerDeviceSignal> AddSignalAsync(long customerId, string deviceId, string? ip, string eventType, DateTime? at, CancellationToken ct, string? geoCountry = null)
     {
+        if (!SignalEventTypes.Contains(eventType)) throw new ValidationException("eventType", $"Unknown event type '{eventType}'. Allowed: {string.Join(", ", SignalEventTypes)}.");
+        if (geoCountry is not null && geoCountry.Length != 2) throw new ValidationException("geoCountry", "geoCountry must be an ISO 3166-1 alpha-2 code.");
         var c = await _access.Customers().AsNoTracking().FirstOrDefaultAsync(x => x.Id == customerId, ct) ?? throw new NotFoundException("Customer", customerId);
         if (string.IsNullOrWhiteSpace(deviceId)) throw new ValidationException("deviceId", "Device ID is required.");
-        var s = new CustomerDeviceSignal { TenantId = c.TenantId, CustomerId = customerId, DeviceId = deviceId, IpAddress = ip, EventType = eventType, OccurredAt = at ?? _clock.UtcNow };
+        var s = new CustomerDeviceSignal { TenantId = c.TenantId, CustomerId = customerId, DeviceId = deviceId, IpAddress = ip, GeoCountry = geoCountry?.ToUpperInvariant(), EventType = eventType, OccurredAt = at ?? _clock.UtcNow };
         _db.Set<CustomerDeviceSignal>().Add(s);
         await _db.SaveChangesAsync(ct);
         return s;

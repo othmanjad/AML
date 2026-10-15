@@ -33,7 +33,7 @@ public class GeographicTests : TmBase
         await Run(rule, At(2025, 4, 1, "00:00:00"), At(2025, 4, 3, "00:00:00"));
         var a3 = await Alerts(rule, c3.Id);
         Result("TM-GEO-03-03", a3.Count == 0,
-            a3.Count == 0 ? "Re-run after list change did not alert on the earlier transaction." :
+            a3.Count == 0 ? "List updated today (rule v2 adds SO); re-run over yesterday evaluated the earlier transaction with v1, the list version in force at transaction time → 0 alerts (run audit lists the version per period)." :
             $"Re-run after SO was added (rule v2) raised {a3.Count} alert on a transaction made before the list change. DEFECT: executions always use the currently active version; list/rule version effective at transaction time is not applied.");
         Done();
     }
@@ -155,7 +155,12 @@ public class BehaviourTests : TmBase
     public async Task BEH_03_night_activity()
     {
         var night = And(F_("txn.localHour", "gte", 0), F_("txn.localHour", "lt", 5));
-        var rule = await Rule(new { window = new { type = "Calendar", unit = "Day" }, condition = And(Cnt(night, "gte", 5, "out"), Sum(night, "gte", 1000, "out")) }, "Low");
+        // "when baseline has none": no night-time activity in the customer's own previous 60 days.
+        var rule = await Rule(new
+        {
+            lookbackDays = 60, window = new { type = "Calendar", unit = "Day" },
+            condition = And(Cnt(night, "gte", 5, "out"), Sum(night, "gte", 1000, "out"), new { aggregate = "historyCount", filter = night, direction = "out", @operator = "eq", value = 0 })
+        }, "Low");
         var c1 = await Cust(); var c2 = await Cust();
         var txns = new List<object>();
         foreach (var c in new[] { c1, c2 }) txns.AddRange(Enumerable.Range(0, 6).Select(i => T(c.W, $"W-N{i}", 250, At(2025, 5, 3, "01:00:00").AddMinutes(i * 20))));
@@ -163,10 +168,10 @@ public class BehaviourTests : TmBase
         await Send(txns);
         await Run(rule, At(2025, 5, 3, "00:00:00"), At(2025, 5, 4, "00:00:00"));
         var a1 = await Alerts(rule, c1.Id);
-        Result("TM-BEH-03-01", a1.Count == 1, $"6 transfers totalling 1,500 between 01:00 and 02:40 local → {a1.Count} alert. Note: the 'baseline has none' condition is not expressible; only the count/amount part is configured.");
+        Result("TM-BEH-03-01", a1.Count == 1, $"6 transfers totalling 1,500 between 01:00 and 02:40 local → {a1.Count} alert (no night-time activity in the previous 60 days).");
         var a2 = await Alerts(rule, c2.Id);
         Result("TM-BEH-03-02", a2.Count == 0,
-            a2.Count == 0 ? "No alert." : $"Night-shift customer with 30 days of nightly history → {a2.Count} alert. GAP: no per-customer baseline (historical time-of-day profile) can suppress the alert.");
+            a2.Count == 0 ? "Night-shift customer with 30 days of nightly history → 0 alerts; baseline condition historyCount(night, 60 days) = 0 not met." : $"Night-shift customer with 30 days of nightly history → {a2.Count} alert. GAP: no per-customer baseline (historical time-of-day profile) can suppress the alert.");
         Done();
     }
 
@@ -187,8 +192,8 @@ public class BehaviourTests : TmBase
         Result("TM-BEH-04-02", (await Alerts(rule, c2.Id)).Count == 0, $"Student receives 300 from parent → {(await Alerts(rule, c2.Id)).Count} alerts.");
         var a3 = await Alerts(rule, c3.Id);
         var dq = await F.WithDb(db => db.Set<DataQualityIssue>().CountAsync(d => d.EntityId == c3.Id.ToString())) - dqBefore;
-        Result("TM-BEH-04-03", dq > 0 || a3.Count > 0,
-            $"Occupation missing, 4,000 received → {a3.Count} alerts and {dq} new data-quality items from the rule run. DEFECT: a missing occupation silently evaluates the 'in' condition as false; no missing-data handling (flag, data-quality item or 'incomplete' result).");
+        Result("TM-BEH-04-03", dq > 0,
+            $"Occupation missing, 4,000 received → {a3.Count} alerts and {dq} new data-quality items from the rule run (RuleInputMissing: condition not met, result incomplete).");
         Done();
     }
 

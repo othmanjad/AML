@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
 using AML.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -77,7 +78,7 @@ public class EngineEdgeCaseTests : TmBase
         var hist1 = await F.WithDb(db => db.Set<AlertStatusHistory>().CountAsync(h => h.AlertId == a.Id));
         var noteAdded = hist1 > hist0;
         Result("TM-ENG-02-03", a2.EvidenceJson == a.EvidenceJson && a2.Status == a.Status && noteAdded,
-            $"Reversal arrived 2 days after the alert → evidence unchanged: {a2.EvidenceJson == a.EvidenceJson}, status {a.Status}→{a2.Status} (no automatic closure), note/history entries added: {hist1 - hist0}. DEFECT: a later reversal of an alerted transaction is not noted on the alert.");
+            $"Reversal arrived 2 days after the alert → evidence unchanged: {a2.EvidenceJson == a.EvidenceJson}, status {a.Status}→{a2.Status} (no automatic closure), note/history entries added: {hist1 - hist0} (LinkedTransactionReversed).");
         Done();
     }
 
@@ -159,19 +160,28 @@ public class EngineEdgeCaseTests : TmBase
     [Fact]
     public async Task ENG_06_late_arrivals()
     {
+        // Driven through the real scheduler (RunScheduledAsync), which evaluates (last window end, now] per active rule version.
+        Task Scheduled() => F.WithScope<int>(sp => sp.GetRequiredService<AML.Application.Rules.RuleExecutionService>().RunScheduledAsync(1, CancellationToken.None));
         var rule = await Rule(DailyCount(20));
-        var c = await Cust();
-        var d = At(2025, 12, 18, "09:00:00");
-        await Send(Enumerable.Range(0, 19).Select(i => T(c.W, "ATM-E06", 20, d.AddMinutes(i * 10), "Withdrawal", channel: "ATM")));
-        // Scheduler semantics: each run covers (last window end, now]; day D was evaluated, then the 20th withdrawal of day D arrives on D+1.
-        await Run(rule, At(2025, 12, 18, "00:00:00"), At(2025, 12, 19, "00:00:00"));
-        await Send(new[] { T(c.W, "ATM-E06", 20, d.AddHours(8), "Withdrawal", channel: "ATM") });
-        await Run(rule, At(2025, 12, 19, "00:00:00"), At(2025, 12, 20, "00:00:00"));
+        var c = await Cust(); var c2 = await Cust();
+        await Task.Delay(1500);
+        var t0 = DateTime.UtcNow.AddMilliseconds(-500);
+        await Send(Enumerable.Range(0, 19).Select(i => T(c.W, "ATM-E06", 20, t0.AddMilliseconds(i * 10), "Withdrawal", channel: "ATM")));
+        await Scheduled();
+        var before = (await Alerts(rule, c.Id)).Count;
+        // The 20th withdrawal of the same day arrives after that window was evaluated.
+        await Send(new[] { T(c.W, "ATM-E06", 20, t0.AddMilliseconds(300), "Withdrawal", channel: "ATM") });
+        await Scheduled();
         var a = await Alerts(rule, c.Id);
-        Result("TM-ENG-06-01", a.Count == 1,
-            $"20th withdrawal of day D ingested on D+1; next scheduled window (D+1) → {a.Count} alerts. DEFECT: scheduled runs select transactions by event time from the last window end, so late arrivals for an already-evaluated window are never re-evaluated (no re-evaluation lookback by ingestion time).");
-        var dq = await F.WithDb(db => db.Set<DataQualityIssue>().CountAsync(x => x.Description.Contains("late") || x.IssueType == "LateArrival"));
-        Result("TM-ENG-06-02", dq > 0, $"Late arrival outside any re-evaluated window → {dq} 'not evaluated' records. DEFECT: late arrivals are not logged as not evaluated and are not visible in operations.");
+        var reeval = await F.WithDb(db => db.Set<AmlRuleExecution>().CountAsync(e => e.RuleId == rule && e.TriggeredBy == "scheduler:late-arrival"));
+        Result("TM-ENG-06-01", before == 0 && a.Count == 1,
+            $"19 withdrawals evaluated by the scheduler → {before} alerts; 20th withdrawal of the same day ingested afterwards → next scheduled run re-evaluated the affected period ({reeval} late-arrival execution) → {a.Count} alert for the original day window ({a.FirstOrDefault()?.EvidenceJson.Contains("windowStartLocal")}).");
+        var old = $"E06-OLD-{c2.Id}";
+        await Send(new[] { T(c2.W, "ATM-E06", 20, DateTime.UtcNow.AddDays(-40), "Withdrawal", channel: "ATM", id: old) });
+        await Scheduled();
+        var tid = (await TxnId(old)).ToString();
+        var dq = await F.WithDb(db => db.Set<DataQualityIssue>().Where(x => x.IssueType == "LateArrivalNotEvaluated" && x.EntityId == tid).Select(x => x.Description).FirstOrDefaultAsync());
+        Result("TM-ENG-06-02", dq is not null, $"Transaction dated 40 days ago arriving after its window was evaluated (lookback 7 days, setting Rules:LateArrivalLookbackDays) → data-quality item LateArrivalNotEvaluated: \"{dq}\" (visible in the data-quality queue).");
         Done();
     }
 
@@ -195,17 +205,18 @@ public class EngineEdgeCaseTests : TmBase
         }
         Result("TM-ENG-07-01", a.Count == 1 && walletAlerts == 0,
             $"10 withdrawals on W1 + 10 on W2 of the same customer → customer-level rule {a.Count} alert; wallet-level rule: " +
-            (walletErrors.Count > 0 ? $"cannot be configured (validator: {string.Join("; ", walletErrors)})" : $"subject 'Wallet' accepted but evaluated per customer → {walletAlerts} alert(s)") +
-            ". GAP: no per-rule aggregation dimension (customer vs wallet).");
+            (walletErrors.Count > 0 ? $"cannot be configured (validator: {string.Join("; ", walletErrors)})" : $"subject 'Wallet' (10 per wallet) → {walletAlerts} alerts") + ".");
         var unknown = "W-UNRESOLVED-" + Guid.NewGuid().ToString("N")[..6];
         var ut = Enumerable.Range(0, 20).Select(i => $"E07U-{unknown}-{i}").ToList();
         await Send(ut.Select((id, i) => T(unknown, "ATM-E07", 20, At(2025, 12, 21, "09:00:00").AddMinutes(i * 5), "Withdrawal", channel: "ATM", id: id)));
+        var fallback = await Rule(new { unresolvedParties = "Wallet", window = new { type = "Calendar", unit = "Day" }, condition = Cnt(Wd, "gte", 20, "out") });
         await Run(rule, At(2025, 12, 21, "00:00:00"), At(2025, 12, 22, "00:00:00"));
+        await Run(fallback, At(2025, 12, 21, "00:00:00"), At(2025, 12, 22, "00:00:00"));
         var tid = await TxnId(ut[0]);
         var dq = await F.WithDb(db => db.Set<DataQualityIssue>().CountAsync(x => x.IssueType == "UnresolvedParty" && x.EntityId == tid.ToString()));
-        var ua = await F.WithDb(db => db.Set<AmlAlert>().CountAsync(x => x.RuleId == rule && x.SubjectKey != null && x.SubjectKey.Contains(unknown)));
+        var ua = await F.WithDb(db => db.Set<AmlAlert>().CountAsync(x => x.RuleId == fallback && x.SubjectKey == "wallet:" + unknown));
         Result("TM-ENG-07-02", dq > 0 && ua > 0,
-            $"20 withdrawals from an unresolved wallet → {dq} UnresolvedParty data-quality item, {ua} wallet-level alerts. GAP: transactions whose party is unresolved are not evaluated at wallet level (customer subjects only).");
+            $"20 withdrawals from an unresolved wallet → {dq} UnresolvedParty data-quality item; customer rule with unresolvedParties = Wallet evaluates the wallet itself → {ua} wallet-level alert (subject wallet:{unknown}).");
         Done();
     }
 
@@ -226,12 +237,15 @@ public class EngineEdgeCaseTests : TmBase
         await Run(r9, At(2025, 12, 24, "00:00:00"), At(2025, 12, 25, "00:00:00"));
         var old = (await Alerts(r9, a.Id)).Single();
         await NewVersion(r9, DailyCount(15));
-        await Send(Enumerable.Range(0, 16).Select(i => T(b.W, "ATM-E09", 20, At(2025, 12, 25, "09:00:00").AddMinutes(i * 5), "Withdrawal", channel: "ATM")));
-        await Run(r9, At(2025, 12, 25, "00:00:00"), At(2025, 12, 26, "00:00:00"));
+        // Activity after the change (dated now); earlier activity stays evaluated with the version in force at its time.
+        await Task.Delay(2000);
+        var after0 = DateTime.UtcNow.AddMilliseconds(-1000);
+        await Send(Enumerable.Range(0, 16).Select(i => T(b.W, "ATM-E09", 20, after0.AddMilliseconds(i * 20), "Withdrawal", channel: "ATM")));
+        await Run(r9, At(2025, 12, 24, "00:00:00"), DateTime.UtcNow.AddMinutes(1));
         var oldAfter = await F.WithDb(db => db.Set<AmlAlert>().FirstAsync(x => x.Id == old.Id));
         var nb = await Alerts(r9, b.Id);
         Result("TM-ENG-09-01", oldAfter.RuleVersion == 1 && oldAfter.EvidenceJson == old.EvidenceJson && old.EvidenceJson.Contains("\"value\":20") && nb.Count == 1 && nb[0].RuleVersion == 2,
-            $"Threshold changed 20 → 15 after alert: old alert keeps v{oldAfter.RuleVersion} evidence (value 20, unchanged); new run uses v{nb.FirstOrDefault()?.RuleVersion} and alerts on 16 withdrawals ({nb.Count}).");
+            $"Threshold changed 20 → 15 after alert: old alert keeps v{oldAfter.RuleVersion} evidence (value 20, unchanged); a new run over both periods evaluates the earlier day with v1 and post-change activity with v{nb.FirstOrDefault()?.RuleVersion}, alerting on 16 withdrawals ({nb.Count}).");
         var before = await F.WithDb(db => db.Set<AmlAlert>().CountAsync(x => x.RuleId == r9));
         var bt = await (await As("officer")).PostOk($"/api/admin/aml-rules/{r9}/run-backtest", new { from = At(2025, 9, 26, "00:00:00"), to = At(2025, 12, 26, "00:00:00") });
         var after = await F.WithDb(db => db.Set<AmlAlert>().CountAsync(x => x.RuleId == r9));
@@ -259,11 +273,11 @@ public class EngineEdgeCaseTests : TmBase
         var reference = U("REF");
         await Send(new[] { T(pa.W, clr, 500, At(2025, 12, 28, "10:00:00"), reference: reference), T(clr, pb.W, 500, At(2025, 12, 28, "10:00:05"), reference: reference) });
         await Run(countRule, At(2025, 12, 28, "00:00:00"), At(2025, 12, 29, "00:00:00"));
-        var legs = await F.WithDb(db => db.Set<Transaction>().Where(t => t.OriginalReference == reference).Select(t => new { t.SenderCustomerId, t.ReceiverCustomerId }).ToListAsync());
-        var outA = legs.Count(l => l.SenderCustomerId == pa.Id);
+        var legs = await F.WithDb(db => db.Set<Transaction>().Where(t => t.OriginalReference == reference).Select(t => new { t.SenderCustomerId, t.ReceiverCustomerId, t.EconomicLegOfId }).ToListAsync());
+        var outA = legs.Count(l => l.SenderCustomerId == pa.Id && l.EconomicLegOfId == null);
         var dbl = (await Alerts(countRule, pa.Id)).Count;
         Result("TM-ENG-10-02", outA == 1 && dbl == 0,
-            $"A → clearing wallet → B (2 legs, shared reference): both legs resolved to economic parties A→B; A's outgoing count = {outA}, rule 'count ≥ 2' → {dbl} alerts. DEFECT: both clearing legs are attributed to the same economic transfer, so A→B is counted twice.");
+            $"A → clearing wallet → B (2 legs, shared reference): both legs resolved to economic parties A→B; the second leg is marked as the same economic transfer (EconomicLegOfId) → A's monitored outgoing count = {outA}, rule 'count ≥ 2' → {dbl} alerts (counted once).");
         Done();
     }
 
@@ -272,8 +286,8 @@ public class EngineEdgeCaseTests : TmBase
     {
         var ch = "TMENG11";
         var def = new { realtimeCapable = true, window = new { type = "Calendar", unit = "Day" }, condition = And(F_("txn.channel", "eq", ch), Cnt(null, "gte", 20, "out")) };
-        await RealtimeRule("TMENG11RT", def);
-        var batch = await Rule(new { window = new { type = "Calendar", unit = "Day" }, condition = And(F_("txn.channel", "eq", ch), Cnt(F_("txn.channel", "eq", ch), "gte", 20, "out")) });
+        // One real-time-capable rule, evaluated inline by the decision API and later by the batch run on the same data.
+        var batch = await RealtimeRule("TMENG11RT", def);
         var c = await Cust();
         var now = DateTime.UtcNow.AddMinutes(-2);
         await Send(Enumerable.Range(0, 19).Select(i => T(c.W, "ATM-E11", 20, now.AddSeconds(i), "Withdrawal", channel: ch)));
@@ -283,10 +297,10 @@ public class EngineEdgeCaseTests : TmBase
         await Send(new[] { T(c.W, "ATM-E11", 20, now.AddMinutes(1), "Withdrawal", channel: ch, id: txId) });
         await Run(batch, now.AddHours(-1), DateTime.UtcNow.AddMinutes(1));
         var a = await Alerts(batch, c.Id);
-        var holdAlerts = await F.WithDb(db => db.Set<AmlAlert>().CountAsync(x => x.PrimaryCustomerId == c.Id && x.Source == "Realtime"));
         var linked = a.Count == 1 && a[0].EvidenceJson.Contains(dec["decisionId"]!.GetValue<string>());
-        Result("TM-ENG-11-01", dec["decision"]!.GetValue<string>() == "HoldForReview" && a.Count == 1 && linked,
-            $"20th withdrawal evaluated inline → {dec["decision"]}; nightly batch on the same data → {a.Count} alert, real-time alerts {holdAlerts}, linked to the real-time decision: {linked}. GAP: real-time holds are not recorded as alerts and batch alerts are not linked to the real-time decision (consistent decision, no duplicate, but no link).");
+        var matches = a.Count == 1 ? (await Matches(a[0].Id)).Select(m => m.MatchKey.Split(':')[0]).ToList() : new List<string>();
+        Result("TM-ENG-11-01", dec["decision"]!.GetValue<string>() == "HoldForReview" && a.Count == 1 && linked && matches.Contains("realtime") && matches.Contains("trigger"),
+            $"20th withdrawal evaluated inline → {dec["decision"]} and alert raised; nightly batch run of the same rule on the same data → {a.Count} alert in total, carrying the real-time decision ID ({linked}) with match records [{string.Join(", ", matches)}] (batch linked to the same alert, no duplicate).");
         Done();
     }
 }

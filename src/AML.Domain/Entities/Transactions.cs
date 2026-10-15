@@ -96,6 +96,11 @@ public class Transaction : TenantEntity, IConcurrencyAware
     public DateTime? LastSourceEventAt { get; set; }
     public string? OriginalSourceTransactionId { get; set; }
     public long? OriginalTransactionId { get; set; }
+    /// <summary>
+    /// Set on the second leg of a transfer routed through an internal (clearing/settlement) wallet: both legs resolve to the
+    /// same economic transfer, which is monitored once through the leg referenced here.
+    /// </summary>
+    public long? EconomicLegOfId { get; set; }
     public bool IsReversal { get; set; }
     public bool IsRefund { get; set; }
     public string? SourceCountry { get; set; }

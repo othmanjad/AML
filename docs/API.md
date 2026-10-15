@@ -32,7 +32,22 @@ OpenAPI/Swagger UI is served at `/swagger` in the Development environment only.
                                           { "aggregate": "count", "operator": "gt", "value": 10 } ] },
   "action": { "severity": "High", "complianceAction": "HoldTransaction" } }
 ```
-Allowed operators: `eq neq gt gte lt lte between in notIn contains`; aggregates: `count sum distinctCounterparties ratio rapidMovement dormancyDays profileRatio peerRatio newCustomers customersPerDevice cycle newCountries`; fields: `GET /api/config/rule-fields`.
+Allowed operators: `eq neq gt gte lt lte between in notIn contains multipleOf`; fields: `GET /api/config/rule-fields`.
+
+| Element | Values / meaning |
+|---|---|
+| `subject` | `Customer` (default), `Wallet`, `Agent`, `Device`, `Entity` (customers joined by entity-resolution links with confidence ≥ `entityMinConfidence`, default 0.9) |
+| `unresolvedParties` | `Ignore` (default) or `Wallet`: customer rules evaluate unresolved wallets at wallet level |
+| `applicability` | Pre-condition; subjects that do not meet it are recorded as *not applicable* in the execution result (not as non-matches) |
+| Aggregates | `count sum distinctCounterparties ratio rapidMovement dormancyDays profileRatio peerRatio newCustomers customersPerDevice cycle newCountries` and `historyCount historySum historyRatio` (customer's own `lookbackDays` before the window), `distinctCount` (`of`: channel, device, sourceCountry, destinationCountry, country, type, counterparty), `reciprocalCount`, `consecutiveDays` (`dailyRange` [min,max]), `newCounterpartyShare`, `sharedDeviceSenders`, `typeShareChange`, `minutesSinceEvent` (`event`: NewDevice, NewLoginCountry or a device-signal event type) |
+| `ratio` | Without `denominator` the numerator is a subset of the window; with one, numerator and denominator filters are applied independently |
+| Fields | `txn.*` (incl. `txn.isOwnAccount`, `txn.isLinkedParty`, `txn.loginCountryMismatch`), `customer.*` (incl. `customer.accountAgeDays`, `customer.age`), `profile.*`, `field:CODE`, and `counterparty.*` (the other resolved party, e.g. `counterparty.isPep`, `counterparty.field:CODE`) |
+| `action.indicators` | `[{ "label", "condition", "severity"?, "severityMode": "Raise" \| "Set" }]` — met indicators are listed in alert evidence; `Raise` lifts severity to at least `severity`, `Set` sets it (e.g. lowers it for approved journeys) |
+| Missing inputs | A customer/profile input that is missing makes the condition not met and raises a `RuleInputMissing` data-quality item (manual/scheduled runs) |
+| Versions | Manual runs evaluate each period with the rule version in force at that time; scheduled runs re-evaluate late-arriving transactions within `Rules:LateArrivalLookbackDays` (default 7) and record older ones as `LateArrivalNotEvaluated` |
+| Real time | List matches and real-time rule hits raise alerts; a real-time rule hit uses the batch deduplication key so the batch run merges into the same alert |
+
+Device signals (`POST /api/customers/{id}/device-signals`): `{ deviceId, ipAddress?, geoCountry?, eventType, occurredAt? }`, `eventType` ∈ Registration, Login, SimChange, PhoneChange, EmailChange, AddressChange, PasswordReset, BeneficiaryAdded, DeviceChangeApproved. Logins from IP prefixes in setting `Monitoring:RoamingIpPrefixes` are treated as having no reliable location.
 
 ## Endpoint catalogue
 

@@ -155,7 +155,9 @@ public sealed class EnvironmentInfo : IEnvironmentInfo
 
 public static class SensitiveDataMasker
 {
-    private static readonly Regex Digits = new(@"(?<!\d)\d{8,}(?!\d)", RegexOptions.Compiled);
+    // Standalone digit runs (identity/account numbers); runs embedded in alphanumeric tokens such as correlation IDs or hashes are kept,
+    // otherwise log lines can no longer be correlated.
+    private static readonly Regex Digits = new(@"(?<![\dA-Za-z])\d{8,}(?![\dA-Za-z])", RegexOptions.Compiled);
     private static readonly Regex Bearer = new(@"(?i)(bearer\s+)[A-Za-z0-9\-_\.=]+", RegexOptions.Compiled);
     private static readonly Regex Jwt = new(@"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", RegexOptions.Compiled);
     private static readonly Regex Email = new(@"([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@", RegexOptions.Compiled);

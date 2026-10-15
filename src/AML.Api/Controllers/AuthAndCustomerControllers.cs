@@ -214,12 +214,12 @@ public sealed class CustomersController : AmlController
     [HttpGet("{id:long}/device-signals"), HasPermission(Perm.EntityRead)]
     public Task<object> DeviceSignals(long id, [FromServices] EntityResolutionService e, CancellationToken ct) => e.DeviceSignalsAsync(id, ct);
 
-    public sealed record DeviceSignalRequest(string DeviceId, string? IpAddress, string EventType, DateTime? OccurredAt);
+    public sealed record DeviceSignalRequest(string DeviceId, string? IpAddress, string EventType, DateTime? OccurredAt, string? GeoCountry = null);
 
     [HttpPost("{id:long}/device-signals"), HasPermission(Perm.CustomersWrite)]
     public async Task<object> AddDeviceSignal(long id, [FromBody] DeviceSignalRequest r, [FromServices] EntityResolutionService e, CancellationToken ct)
     {
-        var s = await e.AddSignalAsync(id, r.DeviceId, r.IpAddress, r.EventType, r.OccurredAt, ct);
+        var s = await e.AddSignalAsync(id, r.DeviceId, r.IpAddress, r.EventType, r.OccurredAt, ct, r.GeoCountry);
         return new { s.Id };
     }
 

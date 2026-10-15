@@ -100,7 +100,13 @@ const AGG_EXTRA: Record<string, string[]> = {
   profileRatio: ['profileField', 'measure'],
   peerRatio: ['peerGroup', 'measure'],
   cycle: ['maxDepth'],
+  distinctCount: ['of'],
+  consecutiveDays: ['dailyRange'],
+  minutesSinceEvent: ['event'],
 };
+
+const DISTINCT_OF = ['channel', 'device', 'sourceCountry', 'destinationCountry', 'country', 'type', 'counterparty'];
+const SIGNAL_EVENTS = ['NewDevice', 'NewLoginCountry', 'Registration', 'Login', 'SimChange', 'PhoneChange', 'EmailChange', 'AddressChange', 'PasswordReset', 'BeneficiaryAdded', 'DeviceChangeApproved'];
 
 function AggregateCondition({ node, onChange, onRemove, meta, path, readOnly }: EdProps) {
   const { t } = useTranslation();
@@ -156,6 +162,26 @@ function AggregateCondition({ node, onChange, onRemove, meta, path, readOnly }: 
           <Labeled id={`${path}-pg`} label={t('rule.peerGroup')}>
             <Input id={`${path}-pg`} disabled={readOnly} value={node.peerGroup} onChange={(e) => onChange({ ...node, peerGroup: e.target.value })} />
           </Labeled>
+        )}
+        {extra.includes('of') && (
+          <Labeled id={`${path}-of`} label={t('rule.of')}>
+            <Select id={`${path}-of`} disabled={readOnly} style={{ minWidth: 160 }} value={node.of} options={DISTINCT_OF.map((v) => ({ value: v, label: v }))} onChange={(v) => onChange({ ...node, of: v })} />
+          </Labeled>
+        )}
+        {extra.includes('event') && (
+          <Labeled id={`${path}-ev`} label={t('rule.event')}>
+            <Select id={`${path}-ev`} disabled={readOnly} style={{ minWidth: 180 }} value={node.event} options={SIGNAL_EVENTS.map((v) => ({ value: v, label: v }))} onChange={(v) => onChange({ ...node, event: v })} />
+          </Labeled>
+        )}
+        {extra.includes('dailyRange') && (
+          <>
+            <Labeled id={`${path}-drmin`} label={t('rule.dailyMin')}>
+              <InputNumber id={`${path}-drmin`} disabled={readOnly} value={node.dailyRange?.[0]} onChange={(v) => onChange({ ...node, dailyRange: [v ?? 0, node.dailyRange?.[1] ?? 0] })} />
+            </Labeled>
+            <Labeled id={`${path}-drmax`} label={t('rule.dailyMax')}>
+              <InputNumber id={`${path}-drmax`} disabled={readOnly} value={node.dailyRange?.[1]} onChange={(v) => onChange({ ...node, dailyRange: [node.dailyRange?.[0] ?? 0, v ?? 0] })} />
+            </Labeled>
+          </>
         )}
         {onRemove && !readOnly && <Button icon={<DeleteOutlined />} aria-label={t('actions.remove')} onClick={onRemove} />}
       </div>

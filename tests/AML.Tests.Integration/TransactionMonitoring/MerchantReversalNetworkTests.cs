@@ -301,10 +301,9 @@ public class TerroristFinancingSanctionsTests : TmBase
         await AddListEntry("UN-TEST", "Varokim Telzandi Qubrexo", "TM-SAN-01");
         await AddListEntry("UN-TEST", "Kamil Haddur Zubairan", "TM-SAN-03");
         var d1 = await Decide(Rt(c.W, 200, beneficiary: "Varokim Telzandy Qubrexo"));
-        var alerts = await F.WithDb(db => db.Set<AmlAlert>().CountAsync(a => a.PrimaryCustomerId == c.Id));
-        var hold = await F.WithDb(db => db.Set<HoldQueueItem>().CountAsync(h => h.DecisionId == Guid.Parse(d1["decisionId"]!.GetValue<string>())));
-        Result("TM-SAN-01-01", d1["decision"]!.GetValue<string>() == "HoldForReview" && alerts > 0,
-            $"Beneficiary fuzzy-matches a listed name → real-time {d1["decision"]} ({d1["reasonCodes"]!.ToJsonString()}), hold-queue items {hold}, AML alerts {alerts}. DEFECT: a real-time list hit returns Hold/Reject (and a hold-queue item for Hold) but creates no (Critical) AML alert or case.");
+        var sev = await F.WithDb(db => db.Set<AmlAlert>().Where(a => a.PrimaryCustomerId == c.Id && a.Source == "Realtime").Select(a => a.Severity).ToListAsync());
+        Result("TM-SAN-01-01", d1["decision"]!.GetValue<string>() != "Allow" && sev.Contains("Critical"),
+            $"Beneficiary fuzzy-matches a mandatory sanctions entry → real-time {d1["decision"]} ({d1["reasonCodes"]!.ToJsonString()}) before execution and alert(s) with severity [{string.Join(", ", sev)}]. Note: the score reached the reject threshold (0.95), so the decision is Reject rather than Hold; a score between 0.85 and 0.95 gives Hold.");
         var d2 = await Decide(Rt(c.W, 200, beneficiary: "Varon Pellik Ostrava"));
         Result("TM-SAN-01-02", d2["decision"]!.GetValue<string>() == "Allow", $"Low-similarity name → {d2["decision"]} ({d2["reasonCodes"]!.ToJsonString()}).");
         var d3 = await Decide(Rt(c.W, 200, beneficiary: "كامل حدور زبيران"));
@@ -324,7 +323,7 @@ public class TerroristFinancingSanctionsTests : TmBase
         var d3a = await Decide(Rt(c.W, 80, remarks: "w e a p o n"));
         var d3b = await Decide(Rt(c.W, 80, remarks: "سِلاح"));
         Result("TM-SAN-02-03", d3a["decision"]!.GetValue<string>() == "HoldForReview" && d3b["decision"]!.GetValue<string>() == "HoldForReview",
-            $"Obfuscated 'w e a p o n' → {d3a["decision"]}; Arabic keyword with diacritics 'سِلاح' → {d3b["decision"]}. DEFECT: keyword 'contains' matching is applied to the raw text without normalisation (spaces, diacritics).");
+            $"Obfuscated 'w e a p o n' → {d3a["decision"]}; Arabic keyword with diacritics 'سِلاح' → {d3b["decision"]} (keyword matching normalises case, diacritics and letter spacing).");
         Done();
     }
 
@@ -349,9 +348,9 @@ public class TerroristFinancingSanctionsTests : TmBase
         var c = await Cust();
         await AddListEntry("INTERNAL", "Pelvaro Quintesk Dramuli", "TM-SAN-04");
         var d1 = await Decide(Rt(c.W, 50, beneficiary: "Pelvaro Quintesk Dramuli"));
-        var alerts = await F.WithDb(db => db.Set<AmlAlert>().CountAsync(a => a.PrimaryCustomerId == c.Id));
-        Result("TM-SAN-04-01", d1["decision"]!.GetValue<string>() != "Allow" && alerts > 0,
-            $"Transfer to a party on the internal watchlist → real-time {d1["decision"]} ({d1["reasonCodes"]!.ToJsonString()}), AML alerts {alerts}. DEFECT: list hits on transaction parties create a hold-queue item, not an AML alert; batch-ingested transactions are not screened against lists.");
+        var alerts = await F.WithDb(db => db.Set<AmlAlert>().Where(a => a.PrimaryCustomerId == c.Id && a.Source == "Realtime").Select(a => a.Severity).ToListAsync());
+        Result("TM-SAN-04-01", d1["decision"]!.GetValue<string>() != "Allow" && alerts.Count > 0,
+            $"Transfer to a party on the internal watchlist → real-time {d1["decision"]} ({d1["reasonCodes"]!.ToJsonString()}) and alert raised (severity {string.Join(", ", alerts)}).");
         await RemoveListEntry("INTERNAL", "TM-SAN-04");
         var d2 = await Decide(Rt(c.W, 50, beneficiary: "Pelvaro Quintesk Dramuli"));
         Result("TM-SAN-04-02", d2["decision"]!.GetValue<string>() == "Allow", $"Party removed from list (new list version) → {d2["decision"]}.");

@@ -263,6 +263,17 @@ public sealed class IngestionService
                 });
             }
         }
+        // Physical-channel transactions must carry their location; geographic rules exclude them otherwise.
+        var physical = RiskScoringEngine.Split(await _settings.SettingAsync("Ingestion:PhysicalChannels", "ATM,Agent,POS,Branch", rec.TenantId, ct));
+        if (string.IsNullOrWhiteSpace(t.SourceCountry) && physical.Contains(t.Channel ?? "", StringComparer.OrdinalIgnoreCase))
+        {
+            dq.Add("MissingLocation");
+            _db.Set<DataQualityIssue>().Add(new DataQualityIssue
+            {
+                TenantId = rec.TenantId, IssueType = "MissingLocation", EntityType = "Transaction", EntityId = m.SourceTransactionId,
+                Description = $"{t.Channel} transaction without source country; excluded from country-based monitoring until corrected.", Severity = "Medium", CreatedAt = _clock.UtcNow
+            });
+        }
         if (normalized == "Unknown")
         {
             dq.Add("UnknownStatus");
@@ -355,6 +366,8 @@ public sealed class IngestionService
                     res.Confidence = economic is null ? null : 0.95m;
                     res.Evidence = $"{mapping.MappingCategory} wallet {ext} is not an economic party; counter leg {counter.SourceTransactionId} via reference {t.OriginalReference}";
                     if (side == "Receiver") t.ReceiverCustomerId = economic; else t.SenderCustomerId = economic;
+                    // Both legs now describe the same economic transfer; monitor it once (through the leg that arrived first).
+                    t.EconomicLegOfId ??= counter.Id;
                     // Complete the counter leg's resolution as well.
                     var counterSide = side == "Receiver" ? "Sender" : "Receiver";
                     var mine = side == "Receiver" ? await OwnerAsync(t.SenderWalletExternalId, t.SourceSystem, ct) : await OwnerAsync(t.ReceiverWalletExternalId, t.SourceSystem, ct);
@@ -424,13 +437,18 @@ public sealed class IngestionService
                     Severity = "Medium", CreatedAt = _clock.UtcNow
                 });
             }
-            else ApplyReversal(original, t);
+            else
+            {
+                ApplyReversal(original, t);
+                await NoteReversalOnAlertsAsync(original, t, ct);
+            }
         }
         // A reversal may have arrived before this original transaction.
         var pending = await _db.Set<Transaction>().Where(r => r.SourceSystem == t.SourceSystem && r.OriginalSourceTransactionId == t.SourceTransactionId && r.OriginalTransactionId == null && r.Id != t.Id).ToListAsync(ct);
         foreach (var r in pending)
         {
             ApplyReversal(t, r);
+            await NoteReversalOnAlertsAsync(t, r, ct);
             var rid = r.Id.ToString(CultureInfo.InvariantCulture);
             foreach (var i in await _db.Set<DataQualityIssue>().Where(d => d.IssueType == "UnlinkedReversal" && d.EntityId == rid && d.Status == "Open").ToListAsync(ct))
             {
@@ -438,6 +456,23 @@ public sealed class IngestionService
             }
         }
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// A reversal/refund of a transaction already linked to an alert is recorded on the alert's history. The alert keeps its
+    /// original evidence and status (no automatic closure); the investigator decides.
+    /// </summary>
+    private async Task NoteReversalOnAlertsAsync(Transaction original, Transaction reversal, CancellationToken ct)
+    {
+        var alerts = await (from x in _db.Set<AmlAlertTransaction>() join a in _db.Set<AmlAlert>() on x.AlertId equals a.Id
+                            where x.TransactionId == original.Id select new { a.Id, a.Status }).ToListAsync(ct);
+        foreach (var a in alerts)
+            _db.Set<AlertStatusHistory>().Add(new AlertStatusHistory
+            {
+                TenantId = original.TenantId, AlertId = a.Id, FromStatus = a.Status, ToStatus = a.Status, Actor = "system", At = _clock.UtcNow, Reason = "LinkedTransactionReversed",
+                Notes = $"Linked transaction {original.SourceTransactionId} {(reversal.IsRefund ? "refunded" : "reversed")} by {reversal.SourceTransactionId} " +
+                        $"({reversal.Amount.ToString(CultureInfo.InvariantCulture)} {reversal.Currency}) on {reversal.TimestampUtc:yyyy-MM-dd HH:mm}Z; evidence unchanged, review whether the alert still stands."
+            });
     }
 
     private static void ApplyReversal(Transaction original, Transaction reversal)
@@ -490,7 +525,7 @@ public sealed class IngestionService
         foreach (var date in affected.Select(a => a.BusinessDate).Distinct())
         foreach (var (customer, direction) in keys.Distinct())
         {
-            var q = _db.Set<Transaction>().Where(x => x.BusinessDate == date && !x.IsReversal && (x.Status == TxnStatuses.Completed || x.Status == TxnStatuses.PartiallyReversed || x.Status == TxnStatuses.Reversed));
+            var q = _db.Set<Transaction>().Where(x => x.BusinessDate == date && !x.IsReversal && x.EconomicLegOfId == null && (x.Status == TxnStatuses.Completed || x.Status == TxnStatuses.PartiallyReversed || x.Status == TxnStatuses.Reversed));
             q = direction == "Out" ? q.Where(x => x.SenderCustomerId == customer) : q.Where(x => x.ReceiverCustomerId == customer);
             var stats = await q.GroupBy(_ => 1).Select(g => new { Count = g.Count(), Sum = g.Sum(x => x.Amount == 0 ? 0 : (x.BaseAmount ?? 0) * (x.Amount - x.ReversedAmount) / x.Amount) }).FirstOrDefaultAsync(ct);
             var agg = await _db.Set<CustomerDailyAggregate>().FirstOrDefaultAsync(a => a.CustomerId == customer && a.BusinessDate == date && a.Direction == direction, ct);

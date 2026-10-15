@@ -56,11 +56,16 @@ public sealed class RealtimeService
     private readonly IAuditService _audit;
     private readonly ILogger<RealtimeService> _log;
     private readonly IServiceScopeFactory _scopes;
+    private readonly Alerts.AlertFactory _alerts;
+
+    /// <summary>A real-time rule that matched inline, with what is needed to raise the same alert the batch run would.</summary>
+    private sealed record RuleHit(long RuleId, long VersionId, int Version, string Code, string Name, string Category, string Severity, RuleDefinition Def,
+        DateOnly LocalDay, DateTime WindowStart, DateTime WindowEnd);
 
     public RealtimeService(IAmlDbContext db, ICurrentUser user, IClock clock, ICorrelationContext corr, TenantSettingsService settings, INameMatcher matcher, FxService fx,
-        IEnvironmentInfo env, ICoreSystemAdapter core, IAuditService audit, ILogger<RealtimeService> log, IServiceScopeFactory scopes)
+        IEnvironmentInfo env, ICoreSystemAdapter core, IAuditService audit, ILogger<RealtimeService> log, IServiceScopeFactory scopes, Alerts.AlertFactory alerts)
     {
-        _scopes = scopes;
+        _scopes = scopes; _alerts = alerts;
         _db = db; _user = user; _clock = clock; _corr = corr; _settings = settings; _matcher = matcher; _fx = fx; _env = env; _core = core; _audit = audit; _log = log;
     }
 
@@ -88,9 +93,10 @@ public sealed class RealtimeService
         var finished = await Task.WhenAny(evalTask, Task.Delay(budget, ct));
         string decision; List<string> reasons; var fallback = false; string? fallbackMode = null; long? customerId = null; var postReview = false;
         string? rulesEvaluated = null, screeningSummary = null;
+        var ruleHits = new List<RuleHit>();
         if (finished == evalTask && evalTask.Status == TaskStatus.RanToCompletion)
         {
-            (decision, reasons, customerId, rulesEvaluated, screeningSummary) = evalTask.Result;
+            (decision, reasons, customerId, rulesEvaluated, screeningSummary, ruleHits) = evalTask.Result;
         }
         else
         {
@@ -132,10 +138,47 @@ public sealed class RealtimeService
             var winner = await _db.Set<RealtimeDecision>().AsNoTracking().FirstAsync(x => x.SourceSystem == source && x.SourceTransactionId == r.SourceTransactionId, ct);
             return new DecideResponse(winner.DecisionId, winner.Decision, winner.ReasonCodes.Split(','), winner.CorrelationId, winner.LatencyMs, winner.IsFallback, true);
         }
+        if (!fallback) await RaiseAlertsAsync(d, r, source, reasons, ruleHits, screeningSummary, ct);
         return new DecideResponse(d.DecisionId, d.Decision, reasons.Distinct().ToList(), d.CorrelationId, d.LatencyMs, fallback, false);
     }
 
-    private async Task<(string Decision, List<string> Reasons, long? CustomerId, string? Rules, string? Screening)> EvaluateAsync(DecideRequest r, string source, long tenantId, CancellationToken ct)
+    /// <summary>
+    /// Inline hits become alerts so they are investigated like batch hits: list matches raise a Critical (mandatory list,
+    /// confirmed score) or High alert; real-time rule hits use the batch deduplication key, so the nightly run of the same
+    /// rule on the same data merges into this alert instead of duplicating it.
+    /// </summary>
+    private async Task RaiseAlertsAsync(RealtimeDecision d, DecideRequest r, string source, List<string> reasons, List<RuleHit> ruleHits, string? screening, CancellationToken ct)
+    {
+        var subjectKey = d.CustomerId is { } cid ? $"customer:{cid}" : $"wallet:{r.SenderWallet ?? "unknown"}";
+        var listReasons = reasons.Where(x => x is "SANCTIONS_NAME_MATCH" or "POTENTIAL_LIST_MATCH" or "FREE_TEXT_LIST_MATCH").Distinct().ToList();
+        if (listReasons.Count > 0)
+        {
+            var critical = listReasons.Contains("SANCTIONS_NAME_MATCH");
+            await _alerts.UpsertAsync(new Alerts.AlertDraft
+            {
+                TenantId = d.TenantId, Source = "Realtime", AlertType = "ListMatch", PrimaryCustomerId = d.CustomerId, SubjectKey = subjectKey,
+                Severity = critical ? "Critical" : "High", Title = $"Real-time list match on {source}/{r.SourceTransactionId}",
+                Description = $"Decision {d.Decision} ({string.Join(", ", listReasons)}); matches: {screening}",
+                DeduplicationKey = $"RT-LIST:{source}:{r.SourceTransactionId}", MatchKey = $"realtime:{d.DecisionId}",
+                EvidenceJson = JsonSerializer.Serialize(new { realtimeDecisionId = d.DecisionId, decision = d.Decision, reasons = listReasons, matches = screening, r.Amount, r.Currency, r.TransactionType, r.Channel }),
+                WindowStart = d.CreatedAt, WindowEnd = d.CreatedAt
+            }, ct);
+        }
+        foreach (var h in ruleHits)
+        {
+            var key = Rules.RuleExecutionService.DedupKey(h.Code, h.Version, h.Def, subjectKey, h.LocalDay, h.WindowStart, h.WindowEnd, null);
+            await _alerts.UpsertAsync(new Alerts.AlertDraft
+            {
+                TenantId = d.TenantId, Source = "Rule", AlertType = h.Category, RuleId = h.RuleId, RuleVersionId = h.VersionId, RuleVersion = h.Version, RuleCode = h.Code,
+                PrimaryCustomerId = d.CustomerId, SubjectKey = subjectKey, Severity = h.Severity, Title = $"{h.Code}: {h.Name}",
+                Description = $"Real-time hit: decision {d.Decision} for {source}/{r.SourceTransactionId}", DeduplicationKey = key, MatchKey = $"realtime:{d.DecisionId}",
+                EvidenceJson = JsonSerializer.Serialize(new { realtimeDecisionId = d.DecisionId, decision = d.Decision, rule = new { h.Code, h.Version, ruleVersionId = h.VersionId }, sourceTransactionId = r.SourceTransactionId, r.Amount, r.Currency }),
+                WindowStart = h.WindowStart, WindowEnd = h.WindowEnd
+            }, ct);
+        }
+    }
+
+    private async Task<(string Decision, List<string> Reasons, long? CustomerId, string? Rules, string? Screening, List<RuleHit> RuleHits)> EvaluateAsync(DecideRequest r, string source, long tenantId, CancellationToken ct)
     {
         await Task.Yield();
         // Separate scope (the request DbContext is not thread-safe under the latency timeout); queries below filter
@@ -201,8 +244,10 @@ public sealed class RealtimeService
         var rules = await (from v in db.Set<AmlRuleVersion>().IgnoreQueryFilters().AsNoTracking()
                            join rr in db.Set<AmlRule>().IgnoreQueryFilters().AsNoTracking() on v.RuleId equals rr.Id
                            where v.TenantId == tenantId && v.Status == ConfigStatus.Active && rr.IsRealtimeCapable && v.EffectiveFrom <= now && (v.EffectiveTo == null || v.EffectiveTo > now)
-                           select new { rr.Code, v.Version, v.DefinitionJson }).ToListAsync(ct);
+                           select new { RuleId = rr.Id, VersionId = v.Id, rr.Code, rr.Name, rr.Category, v.Severity, v.Version, v.DefinitionJson }).ToListAsync(ct);
         var evaluated = new List<string>();
+        var ruleHits = new List<RuleHit>();
+        var windows = new RuleEvaluator(tz);
         foreach (var rule in rules)
         {
             var def = RuleDefinition.Parse(rule.DefinitionJson);
@@ -213,10 +258,17 @@ public sealed class RealtimeService
                 Amount = r.Amount, Currency = r.Currency.ToUpperInvariant(), BaseAmount = conv.BaseAmount, Type = r.TransactionType, Channel = r.Channel, Status = "Pending",
                 SourceCountry = r.SourceCountry, DestinationCountry = r.DestinationCountry, Remarks = r.Remarks, TimestampUtc = now, Direction = "out", FxStatus = conv.Status
             };
-            if (EvalRealtime(def.Condition, txn, agg, tz)) { decision = Max(decision, RealtimeDecisions.Hold); reasons.Add($"RULE_{rule.Code}"); }
+            if (EvalRealtime(def.Condition, txn, agg, tz))
+            {
+                decision = Max(decision, RealtimeDecisions.Hold);
+                reasons.Add($"RULE_{rule.Code}");
+                var (ws, we, bucketEnd) = windows.WindowFor(def.Window, now);
+                ruleHits.Add(new RuleHit(rule.RuleId, rule.VersionId, rule.Version, rule.Code, rule.Name, rule.Category, def.Action?.Severity ?? rule.Severity, def,
+                    DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, tz)), ws, def.Window?.Type == "Calendar" ? bucketEnd : we));
+            }
         }
         if (reasons.Count == 0) reasons.Add("NO_RISK_INDICATORS");
-        return (decision, reasons, senderId, string.Join(";", evaluated), hits.Count == 0 ? null : string.Join(";", hits));
+        return (decision, reasons, senderId, string.Join(";", evaluated), hits.Count == 0 ? null : string.Join(";", hits), ruleHits);
     }
 
     private decimal BestScore(string text, WatchlistEntry e)

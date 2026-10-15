@@ -9,14 +9,28 @@ namespace AML.Domain.Rules;
 /// </summary>
 public sealed class RuleDefinition
 {
-    /// <summary>Customer, Agent, Device.</summary>
+    /// <summary>
+    /// Customer, Wallet, Agent, Device or Entity (customers linked by entity resolution — shared identity, device, contact —
+    /// with confidence ≥ EntityMinConfidence are aggregated as one subject).
+    /// </summary>
     public string Subject { get; set; } = "Customer";
+    public decimal EntityMinConfidence { get; set; } = 0.9m;
+    /// <summary>
+    /// Customer subjects only: Ignore (default) skips transaction sides whose party is not resolved to a customer; Wallet
+    /// evaluates them at wallet level (subject "wallet:{id}") so unresolved activity is still monitored.
+    /// </summary>
+    public string UnresolvedParties { get; set; } = "Ignore";
     public RuleScope? Scope { get; set; }
     /// <summary>Normalized statuses counted as financial activity. Default: Completed, PartiallyReversed, Reversed (netted).</summary>
     public List<string>? EligibleStatuses { get; set; }
     /// <summary>Net (subtract reversed amounts), Exclude (drop reversed transactions), Include (gross).</summary>
     public string ReversalHandling { get; set; } = "Net";
     public RuleWindow? Window { get; set; }
+    /// <summary>
+    /// Optional pre-condition (e.g. sufficient history). Triggers that do not meet it are not evaluated, and the subject is
+    /// recorded as "not applicable" in the execution result instead of being reported as a non-match.
+    /// </summary>
+    public ConditionNode? Applicability { get; set; }
     public ConditionNode? Condition { get; set; }
     /// <summary>Dedup key components: rule, version, subject, day, window, evidenceGroup.</summary>
     public List<string>? DedupKey { get; set; }
@@ -68,7 +82,21 @@ public sealed class RuleAction
     public string? Severity { get; set; }
     /// <summary>Optional compliance action on match (e.g. HoldTransaction) subject to action policy.</summary>
     public string? ComplianceAction { get; set; }
+    /// <summary>
+    /// Secondary indicators evaluated on each match (same window and subject). A met indicator is added to the alert as a flag
+    /// and, when it defines a severity, raises the alert severity to at least that level.
+    /// </summary>
+    public List<RuleIndicator>? Indicators { get; set; }
     public decimal? RiskContribution { get; set; }
+}
+
+public sealed class RuleIndicator
+{
+    public string Label { get; set; } = "";
+    public ConditionNode? Condition { get; set; }
+    public string? Severity { get; set; }
+    /// <summary>Raise (default): severity becomes at least Severity. Set: severity becomes Severity (may lower it, e.g. approved journeys).</summary>
+    public string SeverityMode { get; set; } = "Raise";
 }
 
 public sealed class ConditionNode
@@ -82,7 +110,11 @@ public sealed class ConditionNode
     public string? Operator { get; set; }
     public JsonElement? Value { get; set; }
 
-    /// <summary>Aggregate: count, sum, distinctCounterparties, ratio, rapidMovement, dormancyDays, profileRatio, peerRatio, newCustomers, customersPerDevice, cycle, newCountries.</summary>
+    /// <summary>
+    /// Aggregate: count, sum, distinctCounterparties, ratio, rapidMovement, dormancyDays, profileRatio, peerRatio, newCustomers,
+    /// customersPerDevice, cycle, newCountries; baseline aggregates over the subject's own history in the lookbackDays before
+    /// the window: historyCount, historySum, historyRatio (window sum ÷ historical average for a period of the window's length).
+    /// </summary>
     public string? Aggregate { get; set; }
     public ConditionNode? Filter { get; set; }
     public ConditionNode? Numerator { get; set; }
@@ -96,6 +128,12 @@ public sealed class ConditionNode
     public string? PeerGroup { get; set; }
     public int? MaxDepth { get; set; }
     public string? Label { get; set; }
+    /// <summary>distinctCount: channel, device, sourceCountry, destinationCountry, country, type, counterparty.</summary>
+    public string? Of { get; set; }
+    /// <summary>consecutiveDays: inclusive [min, max] band for each day's filtered total.</summary>
+    public List<decimal>? DailyRange { get; set; }
+    /// <summary>minutesSinceEvent: a signal event type (SimChange, PhoneChange, PasswordReset, BeneficiaryAdded, Login, ...) or NewDevice / NewLoginCountry.</summary>
+    public string? Event { get; set; }
 
     [JsonIgnore] public bool IsGroup => Op is not null;
     [JsonIgnore] public bool IsAggregate => Aggregate is not null;
@@ -103,8 +141,8 @@ public sealed class ConditionNode
 
 public static class RuleOperators
 {
-    public static readonly string[] All = { "eq", "neq", "gt", "gte", "lt", "lte", "between", "in", "notIn", "contains" };
-    public static readonly string[] Numeric = { "eq", "neq", "gt", "gte", "lt", "lte", "between", "in", "notIn" };
+    public static readonly string[] All = { "eq", "neq", "gt", "gte", "lt", "lte", "between", "in", "notIn", "contains", "multipleOf" };
+    public static readonly string[] Numeric = { "eq", "neq", "gt", "gte", "lt", "lte", "between", "in", "notIn", "multipleOf" };
     public static readonly string[] Text = { "eq", "neq", "in", "notIn", "contains" };
     public static readonly string[] Bool = { "eq", "neq" };
     public static readonly string[] Temporal = { "eq", "neq", "gt", "gte", "lt", "lte", "between" };
@@ -115,7 +153,8 @@ public static class RuleAggregates
     public static readonly string[] All =
     {
         "count", "sum", "distinctCounterparties", "ratio", "rapidMovement", "dormancyDays", "profileRatio", "peerRatio",
-        "newCustomers", "customersPerDevice", "cycle", "newCountries"
+        "newCustomers", "customersPerDevice", "cycle", "newCountries", "historyCount", "historySum", "historyRatio", "distinctCount", "reciprocalCount", "consecutiveDays", "newCounterpartyShare",
+        "sharedDeviceSenders", "typeShareChange", "minutesSinceEvent"
     };
     /// <summary>Aggregates computable from pre-computed daily aggregates (allowed for real-time evaluation).</summary>
     public static readonly string[] RealtimeAllowed = { "count", "sum" };
@@ -134,14 +173,28 @@ public static class RuleFieldRegistry
         ["txn.amount"] = Number, ["txn.baseAmount"] = Number, ["txn.fee"] = Number, ["txn.localHour"] = Number,
         ["txn.currency"] = Text, ["txn.type"] = Text, ["txn.channel"] = Text, ["txn.status"] = Text,
         ["txn.sourceCountry"] = Text, ["txn.destinationCountry"] = Text, ["txn.remarks"] = Text, ["txn.copResult"] = Text,
-        ["txn.direction"] = Text, ["txn.isCrossBorder"] = Bool,
+        ["txn.direction"] = Text, ["txn.isCrossBorder"] = Bool, ["txn.isOwnAccount"] = Bool,
+        ["txn.isLinkedParty"] = Bool, ["txn.loginCountryMismatch"] = Bool,
         ["customer.type"] = Text, ["customer.riskLevel"] = Text, ["customer.nationality"] = Text, ["customer.residence"] = Text,
-        ["customer.status"] = Text, ["customer.region"] = Text, ["customer.isPep"] = Bool,
+        ["customer.status"] = Text, ["customer.region"] = Text, ["customer.isPep"] = Bool, ["customer.accountAgeDays"] = Number, ["customer.age"] = Number,
         ["profile.expectedMonthlyVolume"] = Number, ["profile.declaredMonthlyIncome"] = Number, ["profile.expectedMonthlyCount"] = Number,
     };
 
+    /// <summary>
+    /// Fields of the transaction's counterparty (the other resolved customer): "counterparty.isPep", "counterparty.accountAgeDays",
+    /// "counterparty.field:CODE", ... map to the corresponding customer/profile/dynamic field.
+    /// </summary>
+    public const string CounterpartyPrefix = "counterparty.";
+
+    public static string MapCounterparty(string field)
+    {
+        var inner = field[CounterpartyPrefix.Length..];
+        return inner.StartsWith("field:", StringComparison.Ordinal) || inner.StartsWith("profile.", StringComparison.Ordinal) ? inner : "customer." + inner;
+    }
+
     public static string? Resolve(string field, IReadOnlyDictionary<string, string>? dynamicFieldTypes)
     {
+        if (field.StartsWith(CounterpartyPrefix, StringComparison.Ordinal)) return field.Length > CounterpartyPrefix.Length ? Resolve(MapCounterparty(field), dynamicFieldTypes) : null;
         if (Fields.TryGetValue(field, out var t)) return t;
         if (field.StartsWith("field:", StringComparison.Ordinal) && dynamicFieldTypes is not null &&
             dynamicFieldTypes.TryGetValue(field[6..], out var dt))

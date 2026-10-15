@@ -331,10 +331,36 @@ public sealed class RuleService
         var v = await VersionAsync(ruleId, null, x => x.Status == ConfigStatus.Active, ct);
         var now = _clock.UtcNow;
         if (!(v.EffectiveFrom <= now && (v.EffectiveTo is null || v.EffectiveTo > now))) throw new ConflictException("The active version is outside its effective period.");
-        _audit.Record("RULE_RUN_MANUAL", "AmlRule", $"{ruleId} v{v.Version}", null, new { r.From, r.To });
+        // Each transaction is evaluated with the version that was in force at its time: the period before a version's
+        // EffectiveFrom belongs to its predecessor (the first published version also covers history before it existed).
+        var published = await _db.Set<AmlRuleVersion>().AsNoTracking()
+            .Where(x => x.RuleId == ruleId && (x.Status == ConfigStatus.Active || x.Status == ConfigStatus.Superseded))
+            .OrderBy(x => x.EffectiveFrom).ThenBy(x => x.Version).ToListAsync(ct);
+        var segments = new List<(AmlRuleVersion Version, DateTime From, DateTime To)>();
+        for (var i = 0; i < published.Count; i++)
+        {
+            var from = i == 0 ? r.From : Max(r.From, published[i].EffectiveFrom);
+            var to = i == published.Count - 1 ? r.To : Min(r.To, published[i + 1].EffectiveFrom);
+            if (from < to) segments.Add((published[i], from, to));
+        }
+        if (segments.Count == 0) segments.Add((v, r.From, r.To));
+        _audit.Record("RULE_RUN_MANUAL", "AmlRule", $"{ruleId} v{v.Version}", null, new { r.From, r.To, versions = segments.Select(x => new { x.Version.Version, x.From, x.To }) });
         await _db.SaveChangesAsync(ct);
-        return await _exec.RunAsync(v.Id, r.From, r.To, new RuleRunOptions("Manual", true, _user.Username), ct);
+        var results = new List<RuleRunResult>();
+        foreach (var (version, from, to) in segments)
+            results.Add(await _exec.RunAsync(version.Id, from, to, new RuleRunOptions("Manual", true, _user.Username), ct));
+        if (results.Count == 1) return results[0];
+        var last = results[^1];
+        return last with
+        {
+            Status = results.Any(x => x.Status != "Succeeded") ? results.First(x => x.Status != "Succeeded").Status : last.Status,
+            RecordsEvaluated = results.Sum(x => x.RecordsEvaluated), Matches = results.Sum(x => x.Matches), AlertsCreated = results.Sum(x => x.AlertsCreated),
+            AlertsDeduplicated = results.Sum(x => x.AlertsDeduplicated), Errors = results.Sum(x => x.Errors), MatchSummaries = results.SelectMany(x => x.MatchSummaries).ToList()
+        };
     }
+
+    private static DateTime Max(DateTime a, DateTime b) => a > b ? a : b;
+    private static DateTime Min(DateTime a, DateTime b) => a < b ? a : b;
 
     /// <summary>Historical backtest: dry-run unless alert creation is explicitly requested (permission required; alerts tagged as backtest).</summary>
     public async Task<RuleRunResult> BacktestAsync(long ruleId, RuleWindowRequest r, CancellationToken ct)

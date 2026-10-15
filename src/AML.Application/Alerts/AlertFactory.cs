@@ -30,7 +30,11 @@ public sealed class AlertDraft
     public IReadOnlyCollection<long> CustomerIds { get; set; } = Array.Empty<long>();
     public bool IsBacktest { get; set; }
     public bool IsTestData { get; set; }
+    /// <summary>Earlier triggers merged into the same alert in this run (recorded as lightweight match records).</summary>
+    public IReadOnlyList<AlertMatchDraft> AdditionalMatches { get; set; } = Array.Empty<AlertMatchDraft>();
 }
+
+public sealed record AlertMatchDraft(string MatchKey, string MatchedConditionsJson, string EvidenceJson, DateTime WindowStart, DateTime WindowEnd);
 
 public sealed record AlertUpsertResult(AmlAlert Alert, bool Created, bool NewMatch);
 
@@ -103,6 +107,18 @@ public sealed class AlertFactory
                 WindowEnd = d.WindowEnd, MatchedAt = _clock.UtcNow
             });
             newMatch = true;
+        }
+        if (d.AdditionalMatches.Count > 0)
+        {
+            var keys = d.AdditionalMatches.Select(m => m.MatchKey).ToList();
+            var known = (await _db.Set<AmlAlertRuleMatch>().IgnoreQueryFilters().Where(m => m.AlertId == alert.Id && keys.Contains(m.MatchKey)).Select(m => m.MatchKey).ToListAsync(ct)).ToHashSet();
+            foreach (var m in d.AdditionalMatches.Where(m => !known.Contains(m.MatchKey) && m.MatchKey != d.MatchKey))
+                _db.Set<AmlAlertRuleMatch>().Add(new AmlAlertRuleMatch
+                {
+                    TenantId = alert.TenantId, AlertId = alert.Id, ExecutionId = d.ExecutionId, RuleVersionId = d.RuleVersionId, RuleVersion = d.RuleVersion,
+                    MatchKey = m.MatchKey, MatchedConditionsJson = m.MatchedConditionsJson, EvidenceJson = m.EvidenceJson, WindowStart = m.WindowStart,
+                    WindowEnd = m.WindowEnd, MatchedAt = _clock.UtcNow
+                });
         }
         var existingTx = await _db.Set<AmlAlertTransaction>().IgnoreQueryFilters().Where(x => x.AlertId == alert.Id).Select(x => x.TransactionId).ToListAsync(ct);
         foreach (var t in d.TransactionIds.Except(existingTx).Distinct())

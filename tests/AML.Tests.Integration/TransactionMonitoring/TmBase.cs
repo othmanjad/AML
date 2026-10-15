@@ -49,7 +49,7 @@ public abstract class TmBase : AmlTestBase
     protected void Done() => _failures.Should().BeEmpty();
 
     protected async Task<(long Id, string W)> Cust(string type = "Individual", string region = "CENTRAL", object? attributes = null, object? financialProfile = null,
-        bool isPep = false, string? name = null, string? registrationDate = null, long? agentId = null, string? externalId = null)
+        bool isPep = false, string? name = null, string? registrationDate = null, long? agentId = null, string? externalId = null, string? dob = null)
     {
         var api = await As("manager");
         attributes ??= type == "Individual" ? new Dictionary<string, object> { ["OCCUPATION"] = "EMPLOYEE", ["SOURCE_OF_INCOME"] = "SALARY" } : new Dictionary<string, object>();
@@ -57,7 +57,7 @@ public abstract class TmBase : AmlTestBase
         {
             sourceSystem = "CORE", externalId = externalId ?? U("TM"), customerType = type, nameLatin = name ?? "Tm Subject " + Guid.NewGuid().ToString("N")[..6],
             nationalityCountry = type == "Individual" ? "JO" : null, residenceCountry = type == "Individual" ? "JO" : null, incorporationCountry = type == "Individual" ? null : "JO",
-            region, attributes, financialProfile, isPep, registrationDate, onboardingAgentId = agentId
+            region, attributes, financialProfile, isPep, registrationDate, onboardingAgentId = agentId, dateOfBirth = dob
         });
         return (Id(c), await CreateWallet(Id(c)));
     }
@@ -68,6 +68,9 @@ public abstract class TmBase : AmlTestBase
         var ids = string.Join(",", customers);
         await F.ExecSql($"UPDATE CustomerFieldValues SET EffectiveFrom = '2024-01-01' WHERE CustomerId IN ({ids}); UPDATE CustomerFinancialProfiles SET EffectiveFrom = '2024-01-01' WHERE CustomerId IN ({ids});");
     }
+
+    protected async Task Signal(long customer, string eventType, DateTime at, string device = "DEV-TM", string? geoCountry = null, string? ip = null) =>
+        await (await As("manager")).PostOk($"/api/customers/{customer}/device-signals", new { deviceId = device, ipAddress = ip, eventType, occurredAt = at, geoCountry });
 
     protected Task<string> Wallet(long customer) => CreateWallet(customer);
 

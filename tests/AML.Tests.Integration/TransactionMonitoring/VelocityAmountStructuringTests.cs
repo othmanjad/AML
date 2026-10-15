@@ -1,3 +1,4 @@
+using AML.Domain.Entities;
 using AML.Tests.Integration.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -92,7 +93,7 @@ public class VelocityTests : TmBase
     [Fact]
     public async Task VEL_03_outgoing_p2p_per_day()
     {
-        var p2p = new { field = "txn.type", @operator = "eq", value = "P2P" };
+        var p2p = And(F_("txn.type", "eq", "P2P"), F_("txn.isOwnAccount", "eq", false));
         var rule = await Rule(new { scope = new { customerTypes = new[] { "Individual" } }, window = new { type = "Calendar", unit = "Day" }, condition = Cnt(p2p, "gte", 30, "out") });
         var ruleMerchant = await Rule(new { scope = new { customerTypes = new[] { "Merchant" } }, window = new { type = "Calendar", unit = "Day" }, condition = Cnt(p2p, "gte", 200, "out") });
         const int D = 3;
@@ -109,7 +110,7 @@ public class VelocityTests : TmBase
         Result("TM-VEL-03-02", (await Alerts(rule, c2.Id)).Count == 0, $"29 transfers → {(await Alerts(rule, c2.Id)).Count} alerts.");
         var a3 = await Alerts(rule, c3.Id);
         Result("TM-VEL-03-03", a3.Count == 0, $"30 transfers of which 15 to the customer's own second wallet → {a3.Count} alert(s). " +
-            (a3.Count == 0 ? "Own-account transfers excluded." : "DEFECT: the rule DSL has no own-account/self-transfer exclusion, so transfers between the customer's own wallets are counted as outgoing P2P."));
+            (a3.Count == 0 ? "Own-account transfers excluded by the rule filter txn.isOwnAccount = false (15 counted)." : "DEFECT: the rule DSL has no own-account/self-transfer exclusion, so transfers between the customer's own wallets are counted as outgoing P2P."));
         var am = (await Alerts(rule, m.Id)).Count + (await Alerts(ruleMerchant, m.Id)).Count;
         Result("TM-VEL-03-04", am == 0, $"Merchant with 30 transfers: individual rule scoped out, merchant rule threshold 200 → {am} alerts.");
         Done();
@@ -227,7 +228,8 @@ public class AmountTests : TmBase
         Result("TM-AMT-03-03", (await Alerts(rule, c3.Id)).Count == 0, $"Income 2,000, received 4,000 (2×) → {(await Alerts(rule, c3.Id)).Count} alerts.");
         var a4 = await Alerts(rule, c4.Id);
         var exec = await F.WithDb(db => db.Set<AML.Domain.Entities.AmlRuleExecution>().Where(e => e.RuleId == rule).OrderByDescending(e => e.Id).FirstAsync());
-        Result("TM-AMT-03-04", false, $"Declared income missing → {a4.Count} alerts and no 'profile incomplete' alert, data-quality item or 'unable to evaluate' record (execution status {exec.Status}, errors {exec.ErrorCount}). DEFECT: profile-ratio conditions silently evaluate to no-match when the profile value is missing.");
+        var dq4 = await F.WithDb(db => db.Set<DataQualityIssue>().Where(d => d.IssueType == "RuleInputMissing" && d.EntityId == c4.Id.ToString()).Select(d => d.Description).FirstOrDefaultAsync());
+        Result("TM-AMT-03-04", dq4 is not null, $"Declared income missing → {a4.Count} alerts; condition treated as not met and data-quality item raised: \"{dq4}\" (execution status {exec.Status}).");
         var a5 = await Alerts(rule, c5.Id);
         Result("TM-AMT-03-05", a5.Count == 0, $"Income changed 500→2,000 on 15 Mar; 1,600 received → evaluated against the value effective at each transaction time (documented rule) → 1,600/2,000 = 0.8 at month total → {a5.Count} alerts.");
         Done();
@@ -343,8 +345,8 @@ public class StructuringTests : TmBase
         Result("TM-STR-03-02", (await Alerts(rule, c2.Id)).Count == 0, $"9 senders → {(await Alerts(rule, c2.Id)).Count} alerts.");
         Result("TM-STR-03-03", (await Alerts(rule, merchant.Id)).Count == 0, $"Receiver is a registered merchant (rule scoped to individuals) → {(await Alerts(rule, merchant.Id)).Count} alerts.");
         var a4 = await Alerts(rule, c4.Id);
-        var flagged = a4.Count == 1 && a4[0].EvidenceJson.Contains("SameIdentity");
-        Result("TM-STR-03-04", flagged, $"Alert raised ({a4.Count}); 3 senders share one ID token and are linked by entity resolution, but the alert evidence {(flagged ? "flags" : "does NOT flag")} the linked parties. " + (flagged ? "" : "DEFECT: rule evidence does not include entity-resolution links between counterparties."));
+        var flagged = a4.Count == 1 && a4[0].EvidenceJson.Contains("linkedParties") && a4[0].EvidenceJson.Contains("SameIdentity");
+        Result("TM-STR-03-04", flagged, $"Alert raised ({a4.Count}); 3 senders share one ID token and are linked by entity resolution, alert evidence {(flagged ? "flags" : "does NOT flag")} the linked parties (linkedParties: link type and confidence).");
         Done();
     }
 
@@ -359,13 +361,17 @@ public class StructuringTests : TmBase
         var device = "DEV-STR04-" + U();
         foreach (var x in new[] { d1, d2, d3 }) await (await As("manager")).PostOk($"/api/customers/{x.Id}/device-signals", new { deviceId = device, eventType = "Login", occurredAt = L(D, "08:00:00") });
         await (await As("officer")).PostOk("/api/governance/entity-resolution/run");
+        var entityRule = await Rule(new { subject = "Entity", entityMinConfidence = 0.6m, window = new { type = "Calendar", unit = "Day" }, condition = Sum(null, "gte", 5000, "in") }, "High");
         await Send(new[] { T("W-F", p.W, 2000, L(D, "09:00:00")), T("W-F", w2, 2000, L(D, "10:00:00")), T("W-F", w3, 2000, L(D, "11:00:00")), T("W-F", single.W, 2000, L(D, "09:00:00")),
             T("W-F", d1.W, 2000, L(D, "09:00:00")), T("W-F", d2.W, 2000, L(D, "10:00:00")), T("W-F", d3.W, 2000, L(D, "11:00:00")) });
         await Run(rule, L(D, "00:00:00"), L(D, "23:59:59"));
         Result("TM-STR-04-01", (await Alerts(rule, p.Id)).Count == 1, $"Same person, 3 wallets each receiving 2,000 → aggregated by resolved customer → {(await Alerts(rule, p.Id)).Count} person-level alert.");
         Result("TM-STR-04-02", (await Alerts(rule, single.Id)).Count == 0, $"Single wallet receives 2,000 → {(await Alerts(rule, single.Id)).Count} alerts.");
-        var linked = (await Alerts(rule, d1.Id)).Count + (await Alerts(rule, d2.Id)).Count + (await Alerts(rule, d3.Id)).Count;
-        Result("TM-STR-04-03", false, $"Wallets of three customer records linked only by a shared device (entity link created) → {linked} alerts. DEFECT: rules aggregate by customer record only; entity-resolution links (device/ID/phone) are not used as an aggregation dimension and no confidence is shown.");
+        var linkConf = await F.WithDb(db => db.Set<EntityLink>().Where(l => (l.CustomerAId == d1.Id || l.CustomerBId == d1.Id) && l.LinkType == "SharedDevice").Select(l => l.Confidence).FirstOrDefaultAsync());
+        await Run(entityRule, L(D, "00:00:00"), L(D, "23:59:59"));
+        var ea = await F.WithDb(db => db.Set<AmlAlert>().Where(a => a.RuleId == entityRule && (a.PrimaryCustomerId == d1.Id || a.PrimaryCustomerId == d2.Id || a.PrimaryCustomerId == d3.Id)).ToListAsync());
+        var shows = ea.Count == 1 && ea[0].EvidenceJson.Contains("subjectContext") && ea[0].EvidenceJson.Contains("SharedDevice") && ea[0].EvidenceJson.Contains("Confidence");
+        Result("TM-STR-04-03", shows, $"Three customer records linked by a shared device (entity link, confidence {linkConf}) each receiving 2,000 → entity-level rule (subject Entity, minimum confidence 0.6) aggregates 6,000 → {ea.Count} alert; members, link type and confidence in evidence: {shows}.");
         Done();
     }
 
@@ -419,7 +425,12 @@ public class RapidMovementFanTests : TmBase
     [Fact]
     public async Task RMV_03_incoming_then_cash_out()
     {
-        var rule = await Rule(new { window = new { type = "Rolling", hours = 3 }, condition = new { aggregate = "rapidMovement", filter = F_("txn.type", "in", new[] { "P2P", "BankTransfer" }), maxMinutes = 120, @operator = "gte", value = 80 } }, "High");
+        var rule = await Rule(new
+        {
+            window = new { type = "Rolling", hours = 3 },
+            condition = new { aggregate = "rapidMovement", filter = F_("txn.type", "in", new[] { "P2P", "BankTransfer" }), maxMinutes = 120, @operator = "gte", value = 80 },
+            action = new { indicators = new[] { new { label = "Geographic: cash-out abroad", condition = Cnt(And(F_("txn.channel", "eq", "ATM"), F_("txn.sourceCountry", "neq", "JO")), "gte", 1, "out") } } }
+        }, "High");
         const int D = 16;
         var c1 = await Cust(); var c2 = await Cust(); var c3 = await Cust();
         await Send(new[]
@@ -432,7 +443,9 @@ public class RapidMovementFanTests : TmBase
         Result("TM-RMV-03-01", (await Alerts(rule, c1.Id)).Count == 1, $"Received 1,500 transfer, cashed out 1,400 at agent 40 min later → {(await Alerts(rule, c1.Id)).Count} alert. Note: the outgoing leg cannot be restricted to cash-out type in the DSL (any outflow counts).");
         Result("TM-RMV-03-02", (await Alerts(rule, c2.Id)).Count == 0, $"Withdrawal after 3 days → {(await Alerts(rule, c2.Id)).Count} alerts.");
         var a3 = await Alerts(rule, c3.Id);
-        Result("TM-RMV-03-03", false, $"Cash-out at ATM abroad → {a3.Count} alert but no geographic flag. DEFECT/GAP: alerts carry no secondary indicators (geographic flag) and the rule cannot combine leg-specific conditions.");
+        const string flag = "\"indicators\":[\"Geographic: cash-out abroad\"]";
+        var flag3 = a3.Count == 1 && a3[0].EvidenceJson.Contains(flag) && !(await Alerts(rule, c1.Id))[0].EvidenceJson.Contains(flag);
+        Result("TM-RMV-03-03", flag3, $"Cash-out at ATM abroad → {a3.Count} alert carrying the indicator flag 'Geographic: cash-out abroad' (rule action.indicators); the domestic case has no flag: {flag3}.");
         Done();
     }
 
@@ -459,28 +472,34 @@ public class RapidMovementFanTests : TmBase
         {
             dedupKey = new[] { "rule", "version", "subject" }, window = new { type = "Rolling", days = 7 },
             condition = Or(And(F_("field:TM_COLLECTION_APPROVED", "neq", true), new { aggregate = "distinctCounterparties", direction = "in", @operator = "gte", value = 20 }),
-                And(F_("field:TM_COLLECTION_APPROVED", "eq", true), new { aggregate = "distinctCounterparties", direction = "in", @operator = "gte", value = 500 }))
+                And(F_("field:TM_COLLECTION_APPROVED", "eq", true), new { aggregate = "distinctCounterparties", direction = "in", @operator = "gte", value = 500 })),
+            action = new { indicators = new[] { new { label = "Senders are new accounts (< 7 days)", severity = "Critical", condition = Cnt(F_("counterparty.accountAgeDays", "lt", 7), "gte", 10, "in") } } }
         }, "High");
         const int D = 18;
         var c1 = await Cust(); var c2 = await Cust(); var charity = await Cust("Corporate", attributes: new Dictionary<string, object> { ["INCORP_REG_NO"] = "87654321", ["TM_COLLECTION_APPROVED"] = true }); var c4 = await Cust();
         await Backdate(charity.Id);
+        var newSenders = new List<(long Id, string W)>();
+        for (var i = 0; i < 22; i++) newSenders.Add(await Cust(registrationDate: L(D, "00:00:00").AddDays(-2).ToString("yyyy-MM-dd")));
         await Send(Enumerable.Range(0, 22).Select(i => T($"W-FI{i}", c1.W, 30, L(D, "09:00:00").AddHours(i * 5)))
             .Concat(Enumerable.Range(0, 19).Select(i => T($"W-FI{i}", c2.W, 30, L(D, "09:00:00").AddHours(i * 5))))
             .Concat(Enumerable.Range(0, 22).Select(i => T($"W-FI{i}", charity.W, 30, L(D, "09:00:00").AddHours(i * 5))))
-            .Concat(Enumerable.Range(0, 22).Select(i => T($"W-NEW{i}", c4.W, 30, L(D, "09:00:00").AddHours(i * 5)))));
+            .Concat(newSenders.Select((x, i) => T(x.W, c4.W, 30, L(D, "09:00:00").AddHours(i * 5)))));
         await Run(rule, L(D, "00:00:00"), L(D, "00:00:00", 7));
         Result("TM-FAN-01-01", (await Alerts(rule, c1.Id)).Count == 1, $"22 distinct senders within 5 days → {(await Alerts(rule, c1.Id)).Count} alert.");
         Result("TM-FAN-01-02", (await Alerts(rule, c2.Id)).Count == 0, $"19 senders → {(await Alerts(rule, c2.Id)).Count} alerts.");
         Result("TM-FAN-01-03", (await Alerts(rule, charity.Id)).Count == 0, $"Registered charity collection wallet with approved profile (dynamic field TM_COLLECTION_APPROVED) and 22 senders → {(await Alerts(rule, charity.Id)).Count} alerts; the approved-profile threshold (500 senders) is applied by a second rule branch. Note: the threshold is maintained in the rule, not stored on the customer's profile.");
         var a4 = await Alerts(rule, c4.Id);
-        Result("TM-FAN-01-04", false, $"Senders are new wallets → alert severity '{a4.FirstOrDefault()?.Severity}' (unchanged). GAP: no severity escalation based on counterparty attributes (e.g. wallet age).");
+        var sev1 = (await Alerts(rule, c1.Id)).FirstOrDefault()?.Severity;
+        Result("TM-FAN-01-04", a4.Count == 1 && a4[0].Severity == "Critical" && sev1 == "High",
+            $"22 senders registered 2 days earlier → alert severity raised High → {a4.FirstOrDefault()?.Severity} by the indicator 'Senders are new accounts (< 7 days)' (counterparty.accountAgeDays < 7 for ≥ 10 senders); established senders stay {sev1}.");
         Done();
     }
 
     [Fact]
     public async Task FAN_02_fan_out()
     {
-        var rule = await Rule(new { scope = new { customerTypes = new[] { "Individual" } }, dedupKey = new[] { "rule", "version", "subject" }, window = new { type = "Rolling", days = 7 }, condition = new { aggregate = "distinctCounterparties", direction = "out", filter = F_("txn.type", "neq", "Payroll"), @operator = "gte", value = 20 } }, "High");
+        var rule = await Rule(new { scope = new { customerTypes = new[] { "Individual" } }, dedupKey = new[] { "rule", "version", "subject" }, window = new { type = "Rolling", days = 7 }, condition = new { aggregate = "distinctCounterparties", direction = "out", filter = F_("txn.type", "neq", "Payroll"), @operator = "gte", value = 20 },
+            action = new { indicators = new[] { new { label = "Geographic: beneficiaries in high-risk area", condition = Cnt(F_("txn.destinationCountry", "in", new[] { "SY", "YE", "SO" }), "gte", 20, "out") } } } }, "High");
         const int D = 19;
         var c1 = await Cust(); var c2 = await Cust(); var corp = await Cust("Corporate", attributes: new Dictionary<string, object> { ["INCORP_REG_NO"] = "11223344" }); var c4 = await Cust();
         await Send(Enumerable.Range(0, 25).Select(i => T(c1.W, $"W-FO{i}", 30, L(D, "09:00:00").AddHours(i * 2)))
@@ -491,7 +510,9 @@ public class RapidMovementFanTests : TmBase
         Result("TM-FAN-02-01", (await Alerts(rule, c1.Id)).Count == 1, $"25 distinct beneficiaries within ~2 days → {(await Alerts(rule, c1.Id)).Count} alert (dedupKey rule/version/subject; with the default per-day key the pattern spanning two local days produced one alert per day).");
         Result("TM-FAN-02-02", (await Alerts(rule, c2.Id)).Count == 0, $"19 beneficiaries → {(await Alerts(rule, c2.Id)).Count} alerts.");
         Result("TM-FAN-02-03", (await Alerts(rule, corp.Id)).Count == 0, $"Corporate payroll to 25 employees excluded by customer type and Payroll sub-type → {(await Alerts(rule, corp.Id)).Count} alerts.");
-        Result("TM-FAN-02-04", false, $"Beneficiaries all in a high-risk area → {(await Alerts(rule, c4.Id)).Count} alert without a geographic flag. GAP: alerts cannot carry additional indicator flags from a second condition.");
+        var a24 = await Alerts(rule, c4.Id);
+        const string geo = "\"indicators\":[\"Geographic: beneficiaries in high-risk area\"]";
+        Result("TM-FAN-02-04", a24.Count == 1 && a24[0].EvidenceJson.Contains(geo) && !(await Alerts(rule, c1.Id))[0].EvidenceJson.Contains(geo), $"Beneficiaries all in a high-risk area → {a24.Count} alert with the geographic indicator flag in evidence.");
         Done();
     }
 

@@ -5892,6 +5892,9 @@ namespace AML.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<long?>("EconomicLegOfId")
+                        .HasColumnType("bigint");
+
                     b.Property<decimal?>("Fee")
                         .HasPrecision(19, 4)
                         .HasColumnType("decimal(19,4)");

@@ -50,7 +50,7 @@ function DefinitionEditor({ def, setDef, meta, readOnly }: { def: Node; setDef: 
               <div className="form-grid">
                 <div>
                   <label className="sr-label" htmlFor="def-subject">{t('rule.subject')}</label>
-                  <Select id="def-subject" data-testid="def-subject" disabled={readOnly} style={{ width: '100%' }} value={def.subject} options={lv(['Customer', 'Agent', 'Device'])} onChange={(v) => setDef({ ...def, subject: v })} />
+                  <Select id="def-subject" data-testid="def-subject" disabled={readOnly} style={{ width: '100%' }} value={def.subject} options={lv(['Customer', 'Wallet', 'Agent', 'Device', 'Entity'])} onChange={(v) => setDef({ ...def, subject: v })} />
                 </div>
                 <div>
                   <label className="sr-label" htmlFor="def-reversal">{t('rule.reversalHandling')}</label>

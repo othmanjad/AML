@@ -28,12 +28,15 @@
 | Arabic matching | Rule-based normalisation + Jaro-Winkler/skeleton transliteration; precision/recall measured on a small labelled set (20 pairs). | Grow the labelled regression set with compliance-approved examples; tune thresholds. |
 
 ## Transaction-monitoring scenario coverage (AML_Transaction_Monitoring_Test_Cases.xlsx)
-Executed by `tests/AML.Tests.Integration/TransactionMonitoring` — 314 cases: **170 Pass, 21 Fail, 123 Blocked**. Details: `docs/test-results/TM-TEST-SUMMARY.md` and the filled workbook `docs/test-results/AML_Transaction_Monitoring_Test_Cases_RESULTS.xlsx` (sheet *Defects & Gaps*).
+Executed by `tests/AML.Tests.Integration/TransactionMonitoring` — 314 cases: **252 Pass, 0 Fail, 62 Blocked**. Details: `docs/test-results/TM-TEST-SUMMARY.md` and the filled workbook `docs/test-results/AML_Transaction_Monitoring_Test_Cases_RESULTS.xlsx` (sheet *Defects & Gaps*).
 
-| Area | Gap | Test cases |
-|---|---|---|
-| Rule DSL expressiveness | 51 scenarios cannot be configured: no registration date/age, balances, device/IP/session/SIM/auth events, geolocation/distance, counterparty attributes (VASP, gambling, fraud flags, PEP from the sender side), historical baselines/percentiles, sequences (consecutive days, decreasing attempts, reciprocal transfers), modulo/round amounts, distinct channels/devices/countries per window. | Blocked rows (GAP-*) |
-| Engine behaviour | DEF-TM-01…14: no self-transfer exclusion; missing data evaluates silently as no-match; entity-resolution links unused by rules; no secondary indicator flags/severity escalation; runs use the active (not the then-effective) rule version; no per-customer baseline; list hits in transactions create no AML alert; keyword matching without normalisation; late reversals not noted on alerts; late arrivals never re-evaluated; no wallet-level dimension; clearing legs double-counted; real-time holds not linked to batch alerts; quadratic per-subject evaluation (50k transactions do not finish within minutes). | Fail rows (DEF-TM-*) |
-| Ingestion throughput | ~7–8 transactions/s per batch request in the test container (party resolution, FX, aggregates per record). | Observation during TM-ENG-12-02 |
+The first execution found 14 engine defects (DEF-TM-01…14: self-transfer exclusion, silent missing data, entity links, indicator flags/severity, version at transaction time, baselines, real-time list alerts, keyword normalisation, late reversals, late arrivals, wallet-level aggregation, clearing double count, real-time/batch linking, quadratic evaluation). All are fixed and re-tested; the rule DSL was also extended so 25 previously blocked scenarios now run.
 
-The scenario suite records each defect as a failing test on purpose. Run the green regression suite with `--filter "FullyQualifiedName!~TransactionMonitoring"`.
+| Area | Remaining gap (Blocked scenarios) |
+|---|---|
+| Data not ingested | Wallet balances (RMV-02, TF-04, ATO-01, ATO-02); geolocation/distances of agents, ATMs and POS (GEO-01, GEO-08, GEO-09, AGT-06, MER-05); limit-hit events (DEV-07); IP anonymiser and rooted-device flags (DEV-03, DEV-04); invoice/instrument data for refunds (REV-02, REV-05) |
+| DSL patterns not yet expressible | Regular time intervals (VEL-07), peer percentiles (AMT-06, AGT-02), open multi-hop chains (RMV-04), first cross-border after M months (GEO-07), salary-linked remittance over consecutive months (BEH-07), agent–customer links (AGT-01, MER-03), agent registrations followed by activity (AGT-04), payment-then-refund pairing (MER-04), decreasing failed attempts (REV-03), corridor peer share (XBR-03) |
+| Volume | 2 million transactions/day (TM-ENG-12-01) needs production-sized infrastructure; a 50,000-transaction subject now evaluates in ~9 s |
+| Ingestion throughput | ~7–8 transactions/s per batch request in the test container (party resolution, FX, aggregates per record) — to be measured on target infrastructure |
+
+The suite is green; capability gaps are reported as Blocked with the rule validator's rejection as evidence.

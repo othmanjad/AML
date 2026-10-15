@@ -44,6 +44,20 @@ public sealed class RuleDataProvider : IRuleDataProvider
                 case "customer.status": v = c.Status; break;
                 case "customer.region": v = c.Region; break;
                 case "customer.isPep": v = c.IsPep; break;
+                case "customer.accountAgeDays":
+                    // No fallback to the record's creation time: a missing registration date is reported as missing input.
+                    // Activity dated before registration is inconsistent data: also treated as missing (never as a new account).
+                    if (c.RegistrationDate is { } registered && DateOnly.FromDateTime(asOfUtc).DayNumber >= registered.DayNumber)
+                        v = (decimal)(DateOnly.FromDateTime(asOfUtc).DayNumber - registered.DayNumber);
+                    break;
+                case "customer.age":
+                    if (c.DateOfBirth is { } dob)
+                    {
+                        var on = DateOnly.FromDateTime(asOfUtc);
+                        var years = on.Year - dob.Year - (on < dob.AddYears(on.Year - dob.Year) ? 1 : 0);
+                        v = (decimal)years;
+                    }
+                    break;
                 case "customer.riskLevel":
                     v = _db.Set<CurrentCustomerRiskProfile>().IgnoreQueryFilters().AsNoTracking().Where(p => p.CustomerId == id).Select(p => p.Level).FirstOrDefault();
                     break;
@@ -109,11 +123,53 @@ public sealed class RuleDataProvider : IRuleDataProvider
         return a.Concat(b).Distinct().OrderBy(x => x).ToList();
     }
 
+    private readonly Dictionary<long, IReadOnlySet<long>> _links = new();
+    private readonly Dictionary<long, IReadOnlyList<RuleSignal>> _signals = new();
+    private readonly Dictionary<long, IReadOnlyList<string>> _devices = new();
+
+    public IReadOnlySet<long> GetLinkedCustomers(long customerId)
+    {
+        if (_links.TryGetValue(customerId, out var l)) return l;
+        var rows = _db.Set<EntityLink>().IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.TenantId == _tenantId && x.Status == "Linked" && (x.CustomerAId == customerId || x.CustomerBId == customerId))
+            .Select(x => x.CustomerAId == customerId ? x.CustomerBId : x.CustomerAId).ToList();
+        return _links[customerId] = rows.ToHashSet();
+    }
+
+    public IReadOnlyList<RuleSignal> GetSignals(long customerId)
+    {
+        if (_signals.TryGetValue(customerId, out var l)) return l;
+        var rows = _db.Set<CustomerDeviceSignal>().IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.TenantId == _tenantId && x.CustomerId == customerId).OrderBy(x => x.OccurredAt).ThenBy(x => x.Id)
+            .Select(x => new { x.DeviceId, x.IpAddress, x.GeoCountry, x.EventType, x.OccurredAt }).ToList();
+        var roaming = RoamingPrefixes();
+        return _signals[customerId] = rows.Select(x => new RuleSignal(x.DeviceId, x.IpAddress, x.GeoCountry, x.EventType, x.OccurredAt,
+            x.IpAddress is { } ip && roaming.Any(p => ip.StartsWith(p, StringComparison.Ordinal)))).ToList();
+    }
+
+    private List<string>? _roaming;
+
+    /// <summary>Carrier/roaming IP prefixes (setting Monitoring:RoamingIpPrefixes, comma separated): logins from them have no reliable location.</summary>
+    private List<string> RoamingPrefixes()
+    {
+        if (_roaming is not null) return _roaming;
+        var v = _db.Set<SystemSetting>().IgnoreQueryFilters().AsNoTracking().Where(x => x.TenantId == _tenantId && x.Key == "Monitoring:RoamingIpPrefixes").Select(x => x.Value).FirstOrDefault();
+        return _roaming = (v ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    public IReadOnlyList<string> GetDevices(long customerId)
+    {
+        if (_devices.TryGetValue(customerId, out var l)) return l;
+        var fromTxns = _db.Set<Transaction>().IgnoreQueryFilters().AsNoTracking()
+            .Where(t => t.TenantId == _tenantId && t.SenderCustomerId == customerId && t.DeviceId != null).Select(t => t.DeviceId!).Distinct().Take(200).ToList();
+        return _devices[customerId] = GetSignals(customerId).Select(x => x.DeviceId).Concat(fromTxns).Distinct().ToList();
+    }
+
     public IReadOnlyList<RuleTxn> GetNetworkEdges(DateTime fromUtc, DateTime toUtc)
     {
         if (_edges.TryGetValue((fromUtc, toUtc), out var e)) return e;
         e = _db.Set<Transaction>().IgnoreQueryFilters().AsNoTracking()
-            .Where(t => t.TenantId == _tenantId && t.TimestampUtc > fromUtc && t.TimestampUtc <= toUtc && !t.IsReversal && t.Status == TxnStatuses.Completed &&
+            .Where(t => t.TenantId == _tenantId && t.TimestampUtc > fromUtc && t.TimestampUtc <= toUtc && !t.IsReversal && t.EconomicLegOfId == null && t.Status == TxnStatuses.Completed &&
                         t.SenderCustomerId != null && t.ReceiverCustomerId != null)
             .Select(t => new RuleTxn
             {
