@@ -43,7 +43,7 @@ public sealed class TestFaultInjector : IFaultInjector
     }
 }
 
-public sealed class AmlFactory : WebApplicationFactory<Program>
+public class AmlFactory : WebApplicationFactory<Program>
 {
     public const string Password = "Test#Passw0rd!2026";
     public const string ClientSecret = "test-client-secret-xyz";
