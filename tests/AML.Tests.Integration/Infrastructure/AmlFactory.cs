@@ -240,6 +240,9 @@ public abstract class AmlTestBase
         return a;
     }
 
+    /// <summary>Drops a cached session (e.g. after its tokens were revoked).</summary>
+    protected void Forget(string user) => Sessions.TryRemove(F.DbName + ":" + user, out _);
+
     /// <summary>Records the observed outcome (copied into the test-execution workbook as "Actual Result").</summary>
     protected void Actual(string text) => Out.WriteLine("ACTUAL: " + text);
 

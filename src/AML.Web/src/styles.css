@@ -210,3 +210,16 @@ body {
 .wrap-tabs > .ant-tabs-nav .ant-tabs-tab-active {
   border-bottom-color: #1f5fbf;
 }
+
+/* WCAG 2 AA contrast for antd preset tags (default tag text colours are ~3.4:1 on their light backgrounds). */
+.ant-tag-green, .ant-tag-success { color: #135200 !important; }
+.ant-tag-blue, .ant-tag-processing { color: #003a8c !important; }
+.ant-tag-red, .ant-tag-error { color: #a8071a !important; }
+.ant-tag-orange, .ant-tag-warning { color: #873800 !important; }
+.ant-tag-gold { color: #613400 !important; }
+.ant-tag-volcano { color: #871400 !important; }
+.ant-tag-cyan { color: #00474f !important; }
+.ant-tag-purple { color: #22075e !important; }
+.ant-tag-magenta { color: #780650 !important; }
+.ant-tag-lime { color: #254000 !important; }
+.ant-tag-geekblue { color: #061178 !important; }

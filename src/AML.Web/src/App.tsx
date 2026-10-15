@@ -40,6 +40,10 @@ import SettingsPage from './pages/admin/Settings';
 const theme = {
   token: {
     colorPrimary: '#1f5fbf',
+    // WCAG 2 AA: darken secondary/description text (antd default #8c8c8c is only 3.4:1 on white).
+    colorTextDescription: '#595959',
+    colorTextSecondary: '#595959',
+    colorTextTertiary: '#595959',
     colorLink: '#1a55ad',
     borderRadius: 6,
     fontFamily: "'Segoe UI', 'Noto Sans Arabic', 'Noto Sans', Tahoma, Arial, sans-serif",

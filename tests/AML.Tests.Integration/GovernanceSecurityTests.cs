@@ -714,6 +714,7 @@ public class SecurityApiTests : AmlTestBase
         var users = (await (await As("admin")).GetOk("/api/admin/users")).AsArray();
         var u = users.First(x => x!["username"]!.GetValue<string>() == "officer2")!;
         await (await As("admin")).PostOk($"/api/admin/users/{Id(u)}/revoke-sessions");
+        Forget("officer2");
         (await api.Get("/api/customers")).Status.Should().Be(HttpStatusCode.Unauthorized);
         (await api.Post("/api/auth/logout")).Status.Should().NotBe(HttpStatusCode.OK);
         Actual("After admin revoked officer2's sessions (token version bump) the previously valid token → 401.");

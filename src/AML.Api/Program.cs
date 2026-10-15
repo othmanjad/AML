@@ -22,7 +22,7 @@ builder.Host.UseSerilog((ctx, sp, cfg) =>
         .WriteTo.Console(new MaskingFormatter());
     var file = ctx.Configuration["Logging:FilePath"];
     if (!string.IsNullOrWhiteSpace(file)) cfg.WriteTo.File(new MaskingFormatter(), file, shared: true);
-});
+}, preserveStaticLogger: true);
 
 var config = builder.Configuration;
 builder.Services.AddAmlInfrastructure(config, builder.Environment.EnvironmentName);
