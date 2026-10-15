@@ -7,6 +7,7 @@ dist/
 .idea/
 TestResults/
 test-results/
+!docs/test-results/
 playwright-report/
 /data/
 .env
