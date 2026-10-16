@@ -1,22 +1,22 @@
 # Test & build summary — AML Platform v1.1
 
-Execution date: 2026-10-15 · Environment: .NET 8.0 SDK, SQL Server 2022 (Docker), Node 22, Chromium (Playwright 1.56.1).
+Execution date: 2026-10-15, re-run 2026-10-16 after the monitoring-coverage extension · Environment: .NET 8.0 SDK, SQL Server 2022 (Docker), Node 22, Chromium (Playwright 1.56.1).
 
 ## Build
 | Component | Command | Result |
 |---|---|---|
 | Backend solution | `dotnet build AML.sln` | Succeeded (0 errors) |
 | Frontend | `npm run build` (`tsc --noEmit` + `vite build`) | Succeeded (0 TypeScript errors; single 1.6 MB JS bundle) |
-| Database | EF Core migrations `InitialCreate` (117 tables) + `ProtectionTriggers` | Applied on clean databases in every integration run |
+| Database | EF Core migrations `InitialCreate` (117 tables) + `ProtectionTriggers` + `EconomicLegOf` + `MonitoringCoverage` (balances, benchmarks, CTR, household, invoice fields) | Applied on clean databases in every integration run |
 
 ## Automated test runs
 | Suite | Tests | Passed | Failed |
 |---|---|---|---|
 | `AML.Tests.Unit` (domain engines) | 74 | 74 | 0 |
 | `AML.Tests.Integration` excluding `TransactionMonitoring` (API + SQL Server, fresh DB per run, ~7.5 min) | 239 | 239 | 0 |
-| `AML.Tests.Integration` — `TransactionMonitoring` scenario suite (separate workbook, own DB) | 101 methods / 314 cases | 101 | 0 — cases: 252 Pass, 0 Fail, 62 Blocked; see `TM-TEST-SUMMARY.md` |
+| `AML.Tests.Integration` — `TransactionMonitoring` scenario suite (separate workbook, own DB) | 108 methods / 314 cases + 31 coverage checks | 108 | 0 — cases: 268 Pass, 0 Fail, 46 Blocked; see `TM-TEST-SUMMARY.md`; coverage checks (COV-*) for the TMS Rules and Scenarios Summary: 31 Pass, see `docs/TMS-SCENARIO-COVERAGE.md` |
 | Playwright E2E (`src/AML.Web/e2e`, running API + UI) | 9 | 9 | 0 |
-| **Total** | **322** | **322** | **0** |
+| **Total** | **430** | **430** | **0** |
 
 ## Test-case workbooks (results filled in)
 - `AML_Platform_Test_Cases_v1.1_RESULTS.xlsx` — 318 cases: **316 Pass, 0 Fail, 2 Blocked** (TC-NFR-004 24 h soak, TC-NFR-006 DR fail-over: need infrastructure not available here).

@@ -119,6 +119,12 @@ public class Transaction : TenantEntity, IConcurrencyAware
     public string? IntermediaryInstitution { get; set; }
     public string? OrderingInstitution { get; set; }
     public string? Remarks { get; set; }
+    // Trade data (trade-based money-laundering indicators)
+    public string? InvoiceNumber { get; set; }
+    public decimal? InvoiceAmount { get; set; }
+    public string? InvoiceCurrency { get; set; }
+    /// <summary>Goods or services category declared for the payment (e.g. HS chapter or merchant category).</summary>
+    public string? GoodsCategory { get; set; }
     /// <summary>Confirmation-of-payee result from the core/scheme: Match, Mismatch, PartialMatch, NotChecked.</summary>
     public string? CopResult { get; set; }
     public string? PaymentTransparencyStatus { get; set; }
@@ -183,4 +189,21 @@ public class CustomerDailyAggregate : TenantEntity
     public int TxnCount { get; set; }
     public decimal BaseAmount { get; set; }
     public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// End-of-day wallet balance reported by the core system (one row per wallet and business date; a later report for the same
+/// date replaces the earlier one). The base-currency balance is converted with the FX rate effective on that date.
+/// </summary>
+public class WalletBalanceSnapshot : TenantEntity
+{
+    public string SourceSystem { get; set; } = "";
+    public string ExternalWalletId { get; set; } = "";
+    public long? WalletId { get; set; }
+    public long? CustomerId { get; set; }
+    public DateOnly BusinessDate { get; set; }
+    public decimal Balance { get; set; }
+    public string Currency { get; set; } = "";
+    public decimal? BaseBalance { get; set; }
+    public DateTime ReceivedAt { get; set; }
 }

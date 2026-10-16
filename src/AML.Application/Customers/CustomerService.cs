@@ -234,7 +234,7 @@ public sealed class CustomerService
             NameLatin = r.NameLatin?.Trim(), NameArabic = r.NameArabic?.Trim(), NameSearchKey = ArabicNameNormalizer.SearchKey(r.NameLatin, r.NameArabic),
             DateOfBirth = r.DateOfBirth, NationalityCountry = r.NationalityCountry, ResidenceCountry = r.ResidenceCountry, IncorporationCountry = r.IncorporationCountry,
             RegistrationDate = r.RegistrationDate ?? DateOnly.FromDateTime(now), AssignedOfficer = r.AssignedOfficer, Region = r.Region ?? _user.DataScopeRegion,
-            OnboardingAgentId = r.OnboardingAgentId, IsPep = r.IsPep, CreatedAt = now, UpdatedAt = now, CreatedBy = _user.Username, UpdatedBy = _user.Username
+            OnboardingAgentId = r.OnboardingAgentId, HouseholdId = string.IsNullOrWhiteSpace(r.HouseholdId) ? null : r.HouseholdId.Trim(), IsPep = r.IsPep, CreatedAt = now, UpdatedAt = now, CreatedBy = _user.Username, UpdatedBy = _user.Username
         };
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         _db.Set<Customer>().Add(c);
@@ -359,7 +359,7 @@ public sealed class CustomerService
             profile is null ? null : new RiskSummaryDto(profile.Score, profile.Level, profile.CalculatedScore, profile.CalculatedLevel, profile.MonitoringLevel,
                 profile.LastAssessmentId, profile.LastAssessedAt, profile.NextReviewDate, profile.OverrideApplied, profile.OverrideType, profile.OverrideReason,
                 profile.SanctionsWorkflow, profile.MethodologyCode, profile.MethodologyVersion, overdueTask || profile.NextReviewDate < today),
-            decision, alertCount, caseCount, gaps, flags);
+            decision, alertCount, caseCount, gaps, flags, c.HouseholdId);
     }
 
     public async Task<CustomerDetailDto> UpdateAsync(long id, CustomerUpdateRequest r, CancellationToken ct)
@@ -370,7 +370,7 @@ public sealed class CustomerService
         await ValidateCountriesAsync(new[] { r.NationalityCountry, r.ResidenceCountry, r.IncorporationCountry },
             (k, m) => { if (!errors.TryGetValue(k, out var l)) errors[k] = l = new(); l.Add(m); }, ct);
         ValidationException.ThrowIf(errors);
-        var old = new { c.NameLatin, c.NameArabic, c.DateOfBirth, c.NationalityCountry, c.ResidenceCountry, c.IncorporationCountry, c.AssignedOfficer, c.Region, c.IsPep };
+        var old = new { c.NameLatin, c.NameArabic, c.DateOfBirth, c.NationalityCountry, c.ResidenceCountry, c.IncorporationCountry, c.AssignedOfficer, c.Region, c.IsPep, c.HouseholdId };
         if (r.NameLatin is not null) c.NameLatin = r.NameLatin.Trim();
         if (r.NameArabic is not null) c.NameArabic = r.NameArabic.Trim();
         if (r.DateOfBirth is not null) c.DateOfBirth = r.DateOfBirth;
@@ -379,12 +379,13 @@ public sealed class CustomerService
         if (r.IncorporationCountry is not null) c.IncorporationCountry = r.IncorporationCountry;
         if (r.AssignedOfficer is not null) c.AssignedOfficer = r.AssignedOfficer;
         if (r.Region is not null) c.Region = r.Region;
+        if (r.HouseholdId is not null) c.HouseholdId = r.HouseholdId.Trim().Length == 0 ? null : r.HouseholdId.Trim();
         if (r.IsPep is not null) c.IsPep = r.IsPep.Value;
         c.NameSearchKey = ArabicNameNormalizer.SearchKey(c.NameLatin, c.NameArabic);
         c.UpdatedAt = _clock.UtcNow;
         c.UpdatedBy = _user.Username;
         _audit.Record("CUSTOMER_UPDATE", "Customer", id.ToString(), old,
-            new { c.NameLatin, c.NameArabic, c.DateOfBirth, c.NationalityCountry, c.ResidenceCountry, c.IncorporationCountry, c.AssignedOfficer, c.Region, c.IsPep }, r.Reason);
+            new { c.NameLatin, c.NameArabic, c.DateOfBirth, c.NationalityCountry, c.ResidenceCountry, c.IncorporationCountry, c.AssignedOfficer, c.Region, c.IsPep, c.HouseholdId }, r.Reason);
         await _db.SaveChangesAsync(ct);
         return await GetAsync(id, ct);
     }

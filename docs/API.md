@@ -22,6 +22,13 @@ OpenAPI/Swagger UI is served at `/swagger` in the Development environment only.
     "beneficiary": { "name": "…", "account": "…" }, "copResult": "MATCH", "deviceId": "…", "remarks": "…" }] }
 // → { runId, batchId, status, received, processed, duplicates, conflicts, errors, correlationId, records: [{ sourceTransactionId, status, transactionId, error, recordId }] }
 
+// Transactions may also carry trade data: "invoiceNumber", "invoiceAmount", "invoiceCurrency" (required with invoiceAmount), "goodsCategory".
+
+// POST /api/integrations/{source}/balances — end-of-day wallet balances (same client-credential contract)
+{ "balances": [{ "walletId": "W1", "businessDate": "2026-10-14", "balance": 120.50, "currency": "JOD" }] }
+// → { received, stored, replaced, rejected, records: [{ walletId, businessDate, status: Stored|Replaced|Rejected, error }] }
+// A later report for the same wallet and date replaces the earlier one; unknown wallets are stored unlinked (data-quality item).
+
 // POST /api/realtime/transactions/decide  → { decisionId, decision: Allow|HoldForReview|Reject, reasonCodes, correlationId, latencyMs, isFallback, idempotent }
 { "sourceTransactionId": "RT-1", "transactionType": "P2P", "channel": "Mobile", "amount": 50, "currency": "JOD", "senderWallet": "W1", "beneficiaryName": "…", "remarks": "…" }
 
@@ -32,14 +39,21 @@ OpenAPI/Swagger UI is served at `/swagger` in the Development environment only.
                                           { "aggregate": "count", "operator": "gt", "value": 10 } ] },
   "action": { "severity": "High", "complianceAction": "HoldTransaction" } }
 ```
-Allowed operators: `eq neq gt gte lt lte between in notIn contains multipleOf`; fields: `GET /api/config/rule-fields`.
+Allowed operators: `eq neq gt gte lt lte between in notIn contains multipleOf inList notInList`; fields: `GET /api/config/rule-fields`.
 
 | Element | Values / meaning |
 |---|---|
-| `subject` | `Customer` (default), `Wallet`, `Agent`, `Device`, `Entity` (customers joined by entity-resolution links with confidence ≥ `entityMinConfidence`, default 0.9) |
+| `subject` | `Customer` (default), `Wallet`, `Agent`, `Device`, `Entity` (customers joined by entity-resolution links with confidence ≥ `entityMinConfidence`, default 0.9), `Household` (customers sharing `householdId`; a customer without one is its own household; transfers between members are internal) |
 | `unresolvedParties` | `Ignore` (default) or `Wallet`: customer rules evaluate unresolved wallets at wallet level |
 | `applicability` | Pre-condition; subjects that do not meet it are recorded as *not applicable* in the execution result (not as non-matches) |
 | Aggregates | `count sum distinctCounterparties ratio rapidMovement dormancyDays profileRatio peerRatio newCustomers customersPerDevice cycle newCountries` and `historyCount historySum historyRatio` (customer's own `lookbackDays` before the window), `distinctCount` (`of`: channel, device, sourceCountry, destinationCountry, country, type, counterparty), `reciprocalCount`, `consecutiveDays` (`dailyRange` [min,max]), `newCounterpartyShare`, `sharedDeviceSenders`, `typeShareChange`, `minutesSinceEvent` (`event`: NewDevice, NewLoginCountry or a device-signal event type) |
+| Balances | `avgBalance`, `minBalance` (end-of-day base-currency balances on the window's business days) and `balanceRetentionPct` (average balance ÷ window inflow × 100); field `balance.previousDay` (latest end-of-day balance before the transaction's business date, searched back 7 days) and `txn.balanceSharePct` (transaction ÷ that balance × 100). No balance → condition not met + `RuleInputMissing` |
+| `chain` | Longest chain of transfers between distinct customers through the subject: `maxDepth` (hops, 2–10), `maxMinutes` per hop, `minHopPct` (each hop ≥ this % of the previous, default 50). Later hops up to (maxDepth − 1) × maxMinutes after the window are followed; transfers through internal clearing wallets count once. Path in evidence |
+| `peerPercentile` | % of peers whose period activity (filtered amount, or count with `measure: count`) is below the subject's; peers share every `peerBy` attribute (`customer.type`, `customer.region`, `customer.residence`, `customer.nationality`, `customer.riskLevel`, `field:CODE`); `minPeers` (default 10) — smaller groups give no value and a data-quality item. Calendar windows and the Customer subject only. `peerRatio` with `peerBy` uses the same peer group (subject ÷ peer median) |
+| `benchmarkDeviation` | `(subject metric − benchmark) ÷ benchmark × 100` where the metric is a ratio (`numerator`/`denominator`, %) or the filtered sum/count, and the benchmark is the `benchmark` metric configured for the customer's segment (`/api/admin/benchmarks`) |
+| `valueBy` | Threshold chosen by a text attribute: `{ "field": "customer.riskLevel", "values": { "High": 3000 } }`; `value` is the default. Works on numeric field conditions and aggregates (`eq neq gt gte lt lte`); the chosen threshold is written to the evidence |
+| `inList` / `notInList` | Text field against a maintained lookup list: `"CATEGORY"` or `"CATEGORY:ATTRIBUTE"`, e.g. `{ "field": "txn.destinationCountry", "operator": "inList", "value": "COUNTRY:HighRisk" }` |
+| Trade data | `txn.invoiceAmount`, `txn.hasInvoice`, `txn.goodsCategory`, `txn.invoiceVariancePct` ((amount − invoice) ÷ invoice × 100, same currency only); country risk `txn.sourceCountryRisk` / `txn.destinationCountryRisk` (COUNTRY lookup attribute: HighRisk, Elevated, Standard) |
 | `ratio` | Without `denominator` the numerator is a subset of the window; with one, numerator and denominator filters are applied independently |
 | Fields | `txn.*` (incl. `txn.isOwnAccount`, `txn.isLinkedParty`, `txn.loginCountryMismatch`), `customer.*` (incl. `customer.accountAgeDays`, `customer.age`), `profile.*`, `field:CODE`, and `counterparty.*` (the other resolved party, e.g. `counterparty.isPep`, `counterparty.field:CODE`) |
 | `action.indicators` | `[{ "label", "condition", "severity"?, "severityMode": "Raise" \| "Set" }]` — met indicators are listed in alert evidence; `Raise` lifts severity to at least `severity`, `Set` sets it (e.g. lowers it for approved journeys) |
@@ -49,11 +63,25 @@ Allowed operators: `eq neq gt gte lt lte between in notIn contains multipleOf`; 
 
 Device signals (`POST /api/customers/{id}/device-signals`): `{ deviceId, ipAddress?, geoCountry?, eventType, occurredAt? }`, `eventType` ∈ Registration, Login, SimChange, PhoneChange, EmailChange, AddressChange, PasswordReset, BeneficiaryAdded, DeviceChangeApproved. Logins from IP prefixes in setting `Monitoring:RoamingIpPrefixes` are treated as having no reliable location.
 
+Cash transaction reports (CTR): the `ctr-generator` job (every 6 h, last `Reporting:CtrLookbackDays` business days, default 3) or `POST /api/ctr-reports/generate` aggregates, per customer and local business date, completed cash transactions of the types in `Reporting:CtrTransactionTypes` (default `CashIn,CashOut`) net of reversals in the base currency. Customers of the types in `Reporting:CtrExcludedCustomerTypes` (default `Agent`) are not subjects. A total ≥ jurisdiction value `CTR_THRESHOLD` (seed 10,000 JOD, *to be confirmed*) creates a draft; due date = business date + `CTR_FILING_DEADLINE` days (seed 15). Drafts are refreshed when late transactions arrive; approved/exported/submitted reports never change. Approval requires a user other than the preparer; export formats are placeholders until the FIU schema is confirmed; submission is recorded manually and test data can never be submitted.
+
 ## Endpoint catalogue
 
 | Area | Method | Path | Permission |
 |---|---|---|---|
 | Dashboard | GET | `/api/dashboard` | dashboard.read |
+| Integrations | POST | `/api/integrations/{source}/balances` | integrations.ingest |
+| Customers | GET | `/api/customers/{id}/balances?from&to` | transactions.read |
+| CTR | GET | `/api/ctr-reports?status&from&to` | str.prepare |
+| CTR | GET | `/api/ctr-reports/{id}` | str.prepare |
+| CTR | POST | `/api/ctr-reports/generate` `{ businessDate }` | str.prepare |
+| CTR | POST | `/api/ctr-reports/{id}/approve` | str.approve |
+| CTR | POST | `/api/ctr-reports/{id}/reject` | str.approve |
+| CTR | GET | `/api/ctr-reports/{id}/export?format=xml\|csv` | str.submit |
+| CTR | POST | `/api/ctr-reports/{id}/manual-submission` `{ reference }` | str.submit |
+| Rules | GET | `/api/admin/benchmarks?metric&includeHistory` | rules.read |
+| Rules | POST | `/api/admin/benchmarks` `{ metric, segmentField, segmentValue, value, source, effectiveFrom? }` | rules.config |
+| Rules | POST | `/api/admin/benchmarks/{id}/deactivate` `{ reason }` | rules.config |
 | Reports | GET | `/api/reports/catalogue` | reports.read |
 | Reports | GET | `/api/reports/{code}` | reports.read |
 | Reports | POST | `/api/reports/{code}/export` | reports.export |

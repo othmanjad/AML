@@ -49,7 +49,7 @@ public abstract class TmBase : AmlTestBase
     protected void Done() => _failures.Should().BeEmpty();
 
     protected async Task<(long Id, string W)> Cust(string type = "Individual", string region = "CENTRAL", object? attributes = null, object? financialProfile = null,
-        bool isPep = false, string? name = null, string? registrationDate = null, long? agentId = null, string? externalId = null, string? dob = null)
+        bool isPep = false, string? name = null, string? registrationDate = null, long? agentId = null, string? externalId = null, string? dob = null, string? household = null)
     {
         var api = await As("manager");
         attributes ??= type == "Individual" ? new Dictionary<string, object> { ["OCCUPATION"] = "EMPLOYEE", ["SOURCE_OF_INCOME"] = "SALARY" } : new Dictionary<string, object>();
@@ -57,7 +57,7 @@ public abstract class TmBase : AmlTestBase
         {
             sourceSystem = "CORE", externalId = externalId ?? U("TM"), customerType = type, nameLatin = name ?? "Tm Subject " + Guid.NewGuid().ToString("N")[..6],
             nationalityCountry = type == "Individual" ? "JO" : null, residenceCountry = type == "Individual" ? "JO" : null, incorporationCountry = type == "Individual" ? null : "JO",
-            region, attributes, financialProfile, isPep, registrationDate, onboardingAgentId = agentId, dateOfBirth = dob
+            region, attributes, financialProfile, isPep, registrationDate, onboardingAgentId = agentId, dateOfBirth = dob, householdId = household
         });
         return (Id(c), await CreateWallet(Id(c)));
     }
@@ -87,6 +87,12 @@ public abstract class TmBase : AmlTestBase
     }
 
     protected async Task<long> Rule(object definition, string severity = "Medium") => await PublishRule(definition, severity: severity);
+
+    /// <summary>Sends end-of-day wallet balances through the integration API.</summary>
+    protected async Task<JsonNode> Balances(params object[] balances) =>
+        await (await F.ClientAsync()).PostOk("/api/integrations/CORE/balances", new { balances });
+
+    protected static object Bal(string wallet, string date, decimal balance, string currency = "JOD") => new { walletId = wallet, businessDate = date, balance, currency };
 
     protected async Task<JsonNode> Run(long rule, DateTime from, DateTime to) => await RunRule(rule, from, to);
 

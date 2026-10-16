@@ -286,6 +286,29 @@ public sealed class TransactionsController : AmlController
         return Ok(await s.IngestAsync(source, r, ct));
     }
 
+    /// <summary>End-of-day wallet balances from a source system (same client-credential contract as transactions).</summary>
+    [HttpPost("integrations/{source}/balances"), HasPermission(Perm.IntegrationIngest)]
+    public async Task<IActionResult> IngestBalances(string source, [FromBody] BalanceBatchRequest r, [FromServices] BalanceService s, [FromServices] ICurrentUser user, CancellationToken ct)
+    {
+        if (user.SourceSystem is not null && !string.Equals(user.SourceSystem, source, StringComparison.OrdinalIgnoreCase))
+            return StatusCode(403, new ProblemDetails { Status = 403, Title = "Forbidden", Detail = "Client is not authorized for this source system." });
+        return Ok(await s.IngestAsync(source, r, ct));
+    }
+
+    [HttpGet("customers/{id:long}/balances"), HasPermission(Perm.TransactionsRead)]
+    public Task<List<WalletBalanceSnapshot>> Balances(long id, DateOnly? from, DateOnly? to, [FromServices] BalanceService s, CancellationToken ct) => s.ForCustomerAsync(id, from, to, ct);
+
+    [HttpGet("admin/benchmarks"), HasPermission(Perm.RulesRead)]
+    public Task<List<IndustryBenchmark>> Benchmarks(string? metric, bool includeHistory, [FromServices] BenchmarkService s, CancellationToken ct) => s.ListAsync(metric, includeHistory, ct);
+
+    [HttpPost("admin/benchmarks"), HasPermission(Perm.RulesConfig)]
+    public Task<IndustryBenchmark> CreateBenchmark([FromBody] BenchmarkInput i, [FromServices] BenchmarkService s, CancellationToken ct) => s.CreateAsync(i, ct);
+
+    public sealed record BenchmarkDeactivate(string Reason);
+
+    [HttpPost("admin/benchmarks/{id:long}/deactivate"), HasPermission(Perm.RulesConfig)]
+    public Task<IndustryBenchmark> DeactivateBenchmark(long id, [FromBody] BenchmarkDeactivate r, [FromServices] BenchmarkService s, CancellationToken ct) => s.DeactivateAsync(id, r.Reason, ct);
+
     [HttpPost("realtime/transactions/decide"), HasPermission(Perm.RealtimeDecide)]
     public Task<AML.Application.Realtime.DecideResponse> Decide([FromBody] AML.Application.Realtime.DecideRequest r, [FromServices] AML.Application.Realtime.RealtimeService s, CancellationToken ct) => s.DecideAsync(r, ct);
 

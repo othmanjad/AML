@@ -44,6 +44,7 @@ public sealed class RuleDataProvider : IRuleDataProvider
                 case "customer.status": v = c.Status; break;
                 case "customer.region": v = c.Region; break;
                 case "customer.isPep": v = c.IsPep; break;
+                case "customer.householdId": v = c.HouseholdId; break;
                 case "customer.accountAgeDays":
                     // No fallback to the record's creation time: a missing registration date is reported as missing input.
                     // Activity dated before registration is inconsistent data: also treated as missing (never as a new account).
@@ -180,6 +181,134 @@ public sealed class RuleDataProvider : IRuleDataProvider
         return e;
     }
 
+    private readonly Dictionary<(long?, string?), Dictionary<DateOnly, decimal>> _balances = new();
+
+    /// <summary>Balances are loaded once per customer / wallet (whole history) and filtered in memory.</summary>
+    public IReadOnlyDictionary<DateOnly, decimal> GetBalances(long? customerId, string? walletExternalId, DateOnly from, DateOnly to)
+    {
+        var key = (walletExternalId is null ? customerId : null, walletExternalId);
+        if (!_balances.TryGetValue(key, out var all))
+        {
+            var q = _db.Set<WalletBalanceSnapshot>().IgnoreQueryFilters().AsNoTracking().Where(x => x.TenantId == _tenantId && x.BaseBalance != null);
+            q = walletExternalId is not null ? q.Where(x => x.ExternalWalletId == walletExternalId) : q.Where(x => x.CustomerId == customerId);
+            all = q.GroupBy(x => x.BusinessDate).Select(g => new { g.Key, Total = g.Sum(x => x.BaseBalance!.Value) }).ToList().ToDictionary(x => x.Key, x => x.Total);
+            _balances[key] = all;
+        }
+        return all.Where(kv => kv.Key >= from && kv.Key <= to).ToDictionary(kv => kv.Key, kv => kv.Value);
+    }
+
+    private readonly Dictionary<string, IReadOnlySet<string>> _lists = new(StringComparer.Ordinal);
+
+    public IReadOnlySet<string> GetLookupCodes(string reference)
+    {
+        if (_lists.TryGetValue(reference, out var l)) return l;
+        var parts = reference.Split(':', 2);
+        var category = parts[0];
+        var q = _db.Set<LookupValue>().AsNoTracking().Where(x => x.Category == category && x.IsActive);
+        if (parts.Length == 2) { var attr = parts[1]; q = q.Where(x => x.Attribute == attr); }
+        return _lists[reference] = q.Select(x => x.Code).ToList().ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private Dictionary<string, string?>? _countryRisk;
+
+    public string? GetCountryRisk(string? country)
+    {
+        if (country is null) return null;
+        _countryRisk ??= _db.Set<LookupValue>().AsNoTracking().Where(x => x.Category == "COUNTRY" && x.IsActive).Select(x => new { x.Code, x.Attribute }).ToList()
+            .ToDictionary(x => x.Code, x => x.Attribute, StringComparer.OrdinalIgnoreCase);
+        return _countryRisk.TryGetValue(country, out var a) ? a ?? "Standard" : null;
+    }
+
+    private readonly Dictionary<string, Dictionary<long, string?>> _attrColumns = new(StringComparer.Ordinal);
+
+    /// <summary>Current value of a peer attribute for every customer of the tenant (loaded once per attribute).</summary>
+    private Dictionary<long, string?> AttributeColumn(string attribute)
+    {
+        if (_attrColumns.TryGetValue(attribute, out var col)) return col;
+        var customers = _db.Set<Customer>().IgnoreQueryFilters().AsNoTracking().Where(c => c.TenantId == _tenantId && !c.IsAnonymised);
+        col = attribute switch
+        {
+            "customer.type" => customers.Select(c => new { c.Id, V = (string?)c.CustomerType }).ToDictionary(x => x.Id, x => x.V),
+            "customer.region" => customers.Select(c => new { c.Id, V = c.Region }).ToDictionary(x => x.Id, x => x.V),
+            "customer.residence" => customers.Select(c => new { c.Id, V = c.ResidenceCountry }).ToDictionary(x => x.Id, x => x.V),
+            "customer.nationality" => customers.Select(c => new { c.Id, V = c.NationalityCountry }).ToDictionary(x => x.Id, x => x.V),
+            "customer.riskLevel" => (from c in customers
+                                     join p in _db.Set<CurrentCustomerRiskProfile>().IgnoreQueryFilters().AsNoTracking() on c.Id equals p.CustomerId into g
+                                     from p in g.DefaultIfEmpty()
+                                     select new { c.Id, V = p == null ? null : p.Level }).ToDictionary(x => x.Id, x => x.V),
+            _ when attribute.StartsWith("field:", StringComparison.Ordinal) => FieldColumn(attribute[6..], customers),
+            _ => new Dictionary<long, string?>()
+        };
+        return _attrColumns[attribute] = col;
+    }
+
+    private Dictionary<long, string?> FieldColumn(string code, IQueryable<Customer> customers)
+    {
+        var ids = customers.Select(c => c.Id).ToList();
+        var rows = _db.Set<CustomerFieldValue>().IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.TenantId == _tenantId && x.FieldCode == code && x.EffectiveTo == null)
+            .Select(x => new { x.CustomerId, x.ValueText, x.ValueNumber, x.ValueBool, x.ValueJson }).ToList();
+        var map = ids.ToDictionary(i => i, _ => (string?)null);
+        foreach (var r in rows)
+            map[r.CustomerId] = r.ValueText ?? r.ValueJson ?? (r.ValueNumber is { } n ? n.ToString(System.Globalization.CultureInfo.InvariantCulture) : r.ValueBool?.ToString());
+        return map;
+    }
+
+    /// <summary>Peers share the subject's current value of every attribute; a subject missing any attribute has no peer group.</summary>
+    public (string Signature, IReadOnlyList<long> Members)? GetPeerGroup(long customerId, IReadOnlyList<string> peerBy)
+    {
+        var cols = peerBy.Select(a => (Attr: a, Col: AttributeColumn(a))).ToList();
+        var values = new List<string>();
+        foreach (var (a, col) in cols)
+        {
+            if (!col.TryGetValue(customerId, out var v) || string.IsNullOrEmpty(v)) return null;
+            values.Add($"{a}={v}");
+        }
+        var members = cols[0].Col.Keys.Where(id => cols.All(c => c.Col.TryGetValue(id, out var v) && string.Equals(v, c.Col[customerId], StringComparison.OrdinalIgnoreCase))).ToList();
+        return (string.Join(";", values), members);
+    }
+
+    private readonly Dictionary<(string, DateTime, DateTime), List<(long, RuleTxn)>> _customerTxns = new();
+
+    public IReadOnlyList<(long CustomerId, RuleTxn Txn)> GetCustomerTransactions(IReadOnlyCollection<long> customerIds, DateTime fromUtc, DateTime toUtc)
+    {
+        var key = (string.Join(",", customerIds.OrderBy(x => x)), fromUtc, toUtc);
+        if (_customerTxns.TryGetValue(key, out var cached)) return cached;
+        var result = new List<(long, RuleTxn)>();
+        foreach (var chunk in customerIds.Chunk(1000))
+        {
+            var ids = chunk.ToList();
+            var rows = _db.Set<Transaction>().IgnoreQueryFilters().AsNoTracking()
+                .Where(t => t.TenantId == _tenantId && t.TimestampUtc > fromUtc && t.TimestampUtc <= toUtc && t.EconomicLegOfId == null &&
+                            ((t.SenderCustomerId != null && ids.Contains(t.SenderCustomerId.Value)) || (t.ReceiverCustomerId != null && ids.Contains(t.ReceiverCustomerId.Value))))
+                .ToList();
+            var set = ids.ToHashSet();
+            foreach (var t in rows)
+            {
+                if (t.SenderCustomerId is { } s && set.Contains(s)) result.Add((s, Project(t, "out")));
+                if (t.ReceiverCustomerId is { } r && r != t.SenderCustomerId && set.Contains(r)) result.Add((r, Project(t, "in")));
+            }
+        }
+        return _customerTxns[key] = result;
+    }
+
+    private Dictionary<string, List<IndustryBenchmark>>? _benchmarks;
+
+    public RuleBenchmark? GetBenchmark(string metric, long customerId, DateTime asOfUtc)
+    {
+        _benchmarks ??= _db.Set<IndustryBenchmark>().IgnoreQueryFilters().AsNoTracking().Where(b => b.TenantId == _tenantId && b.IsActive).ToList()
+            .GroupBy(b => b.Metric, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        if (!_benchmarks.TryGetValue(metric, out var rows)) return null;
+        foreach (var b in rows.Where(b => b.EffectiveFrom <= asOfUtc && (b.EffectiveTo == null || b.EffectiveTo > asOfUtc)).OrderByDescending(b => b.EffectiveFrom))
+        {
+            var v = GetAttribute(customerId, b.SegmentField, asOfUtc);
+            var text = v is IEnumerable<string> l ? l.ToList() : v is null ? new List<string>() : new List<string> { Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture) ?? "" };
+            if (text.Any(x => string.Equals(x, b.SegmentValue, StringComparison.OrdinalIgnoreCase)))
+                return new RuleBenchmark(b.Metric, b.SegmentField, b.SegmentValue, b.Value, b.Source);
+        }
+        return null;
+    }
+
     public static RuleTxn Project(Transaction t, string direction) => new()
     {
         Id = t.Id, SourceTransactionId = t.SourceTransactionId, TimestampUtc = t.TimestampUtc, Amount = t.Amount, Currency = t.Currency, BaseAmount = t.BaseAmount,
@@ -187,6 +316,7 @@ public sealed class RuleDataProvider : IRuleDataProvider
         Status = t.Status, Channel = t.Channel, Fee = t.Fee, SenderCustomerId = t.SenderCustomerId, ReceiverCustomerId = t.ReceiverCustomerId,
         SenderWallet = t.SenderWalletExternalId, ReceiverWallet = t.ReceiverWalletExternalId, AgentCustomerId = t.AgentCustomerId, SourceCountry = t.SourceCountry,
         DestinationCountry = t.DestinationCountry, Remarks = t.Remarks, DeviceId = t.DeviceId, CopResult = t.CopResult, ReversedAmount = t.ReversedAmount,
+        InvoiceAmount = t.InvoiceAmount, InvoiceCurrency = t.InvoiceCurrency, GoodsCategory = t.GoodsCategory,
         IsReversal = t.IsReversal, Direction = direction
     };
 }

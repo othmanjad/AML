@@ -170,6 +170,9 @@ public sealed class IngestionService
             if (!await _db.Set<LookupValue>().AnyAsync(l => l.Category == "CURRENCY" && l.Code == cur && l.IsActive, ct))
                 problems.Add($"unsupported currency '{m.Currency}' (never defaulted)");
         }
+        if (m.InvoiceAmount is < 0) problems.Add("invoiceAmount must not be negative");
+        if (m.InvoiceCurrency is { } ic && ic.Trim().Length != 3) problems.Add("invoiceCurrency must be an ISO 4217 code");
+        if (m.InvoiceAmount is not null && string.IsNullOrWhiteSpace(m.InvoiceCurrency)) problems.Add("invoiceCurrency is required with invoiceAmount");
         if (problems.Count > 0) return await DeadLetterAsync(rec, "Validation failed: " + string.Join("; ", problems), ct);
 
         _faults.Check("ingestion.process");
@@ -236,7 +239,8 @@ public sealed class IngestionService
             OriginatorName = m.Originator?.Name, OriginatorAccount = m.Originator?.Account, OriginatorAddress = m.Originator?.Address,
             OriginatorNationalId = m.Originator?.NationalId, OriginatorDateOfBirth = m.Originator?.DateOfBirth, OriginatorPlaceOfBirth = m.Originator?.PlaceOfBirth,
             BeneficiaryName = m.Beneficiary?.Name, BeneficiaryAccount = m.Beneficiary?.Account, IntermediaryInstitution = m.IntermediaryInstitution,
-            OrderingInstitution = m.OrderingInstitution, Remarks = m.Remarks, CopResult = m.CopResult, DeviceId = m.DeviceId, IpAddress = m.IpAddress,
+            OrderingInstitution = m.OrderingInstitution, Remarks = m.Remarks,
+            InvoiceNumber = m.InvoiceNumber, InvoiceAmount = m.InvoiceAmount, InvoiceCurrency = m.InvoiceCurrency?.Trim().ToUpperInvariant(), GoodsCategory = m.GoodsCategory, CopResult = m.CopResult, DeviceId = m.DeviceId, IpAddress = m.IpAddress,
             IngestedAt = _clock.UtcNow, IngestionRunId = rec.RunId, IsTestData = m.IsTestData
         };
         var dq = new List<string>();

@@ -88,3 +88,23 @@ public class TransactionStatusMapping : TenantEntity
     public string SourceStatus { get; set; } = "";
     public string NormalizedStatus { get; set; } = "";
 }
+
+/// <summary>
+/// Benchmark value of a metric for a customer segment (e.g. cash share of turnover for a business type), used by the
+/// benchmarkDeviation rule aggregate. Values are maintained by compliance with their source; examples are to be confirmed.
+/// </summary>
+public class IndustryBenchmark : TenantEntity
+{
+    /// <summary>Metric code referenced by rules (e.g. CASH_SHARE_PCT).</summary>
+    public string Metric { get; set; } = "";
+    /// <summary>Customer attribute that defines the segment (customer.type, customer.region, field:CODE, ...).</summary>
+    public string SegmentField { get; set; } = "";
+    public string SegmentValue { get; set; } = "";
+    public decimal Value { get; set; }
+    public string? Source { get; set; }
+    public DateTime EffectiveFrom { get; set; }
+    public DateTime? EffectiveTo { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; }
+    public string? CreatedBy { get; set; }
+}

@@ -38,6 +38,7 @@ public static class JobCatalog
         new("review-scheduler", TimeSpan.FromHours(6), true, (sp, t, ct) => sp.GetRequiredService<RiskAssessmentService>().ScheduleReviewTasksAsync(t, ct)),
         new("review-escalation", TimeSpan.FromHours(1), true, (sp, t, ct) => sp.GetRequiredService<RiskAssessmentService>().EscalateOverdueReviewsAsync(t, ct)),
         new("hold-sla", TimeSpan.FromMinutes(1), true, (sp, t, ct) => sp.GetRequiredService<RealtimeService>().EscalateHoldsAsync(t, ct)),
+        new("ctr-generator", TimeSpan.FromHours(6), true, (sp, t, ct) => sp.GetRequiredService<CtrService>().GenerateRecentAsync(t, ct)),
         new("str-sla", TimeSpan.FromMinutes(15), true, (sp, t, ct) => sp.GetRequiredService<RegulatoryReportService>().CheckSlasAsync(t, ct)),
         new("authority-overdue", TimeSpan.FromHours(1), true, (sp, t, ct) => sp.GetRequiredService<AuthorityRequestService>().MarkOverdueAsync(t, ct)),
         new("alert-sla", TimeSpan.FromMinutes(15), true, (sp, t, ct) => sp.GetRequiredService<AlertService>().MarkOverdueAsync(t, ct)),

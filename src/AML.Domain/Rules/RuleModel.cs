@@ -10,8 +10,9 @@ namespace AML.Domain.Rules;
 public sealed class RuleDefinition
 {
     /// <summary>
-    /// Customer, Wallet, Agent, Device or Entity (customers linked by entity resolution — shared identity, device, contact —
-    /// with confidence ≥ EntityMinConfidence are aggregated as one subject).
+    /// Customer, Wallet, Agent, Device, Entity (customers linked by entity resolution — shared identity, device, contact —
+    /// with confidence ≥ EntityMinConfidence are aggregated as one subject) or Household (customers sharing the household
+    /// identifier from the core system; customers without one form a household of their own).
     /// </summary>
     public string Subject { get; set; } = "Customer";
     public decimal EntityMinConfidence { get; set; } = 0.9m;
@@ -134,16 +135,39 @@ public sealed class ConditionNode
     public List<decimal>? DailyRange { get; set; }
     /// <summary>minutesSinceEvent: a signal event type (SimChange, PhoneChange, PasswordReset, BeneficiaryAdded, Login, ...) or NewDevice / NewLoginCountry.</summary>
     public string? Event { get; set; }
+    /// <summary>
+    /// peerPercentile / peerRatio: customer attributes that define the peer group (customer.type, customer.region, customer.residence,
+    /// customer.nationality, customer.riskLevel, field:CODE). Peers share the subject's value for every attribute.
+    /// </summary>
+    public List<string>? PeerBy { get; set; }
+    /// <summary>peerPercentile / peerRatio with peerBy: minimum peer-group size (excluding the subject); smaller groups give no value.</summary>
+    public int? MinPeers { get; set; }
+    /// <summary>chain: each hop must carry at least this percentage of the previous hop's amount (default 50).</summary>
+    public decimal? MinHopPct { get; set; }
+    /// <summary>benchmarkDeviation: industry benchmark metric code (configured per customer segment).</summary>
+    public string? Benchmark { get; set; }
+    /// <summary>
+    /// Threshold chosen by an attribute of the trigger or subject (e.g. customer.riskLevel, txn.destinationCountryRisk): when the
+    /// attribute's value has an entry, it replaces value; otherwise value applies.
+    /// </summary>
+    public ValueBy? ValueBy { get; set; }
 
     [JsonIgnore] public bool IsGroup => Op is not null;
     [JsonIgnore] public bool IsAggregate => Aggregate is not null;
 }
 
+public sealed class ValueBy
+{
+    public string Field { get; set; } = "";
+    public Dictionary<string, decimal> Values { get; set; } = new();
+}
+
 public static class RuleOperators
 {
-    public static readonly string[] All = { "eq", "neq", "gt", "gte", "lt", "lte", "between", "in", "notIn", "contains", "multipleOf" };
+    public static readonly string[] All = { "eq", "neq", "gt", "gte", "lt", "lte", "between", "in", "notIn", "contains", "multipleOf", "inList", "notInList" };
     public static readonly string[] Numeric = { "eq", "neq", "gt", "gte", "lt", "lte", "between", "in", "notIn", "multipleOf" };
-    public static readonly string[] Text = { "eq", "neq", "in", "notIn", "contains" };
+    /// <summary>inList / notInList compare with a maintained lookup list: "CATEGORY" or "CATEGORY:ATTRIBUTE" (e.g. COUNTRY:HighRisk).</summary>
+    public static readonly string[] Text = { "eq", "neq", "in", "notIn", "contains", "inList", "notInList" };
     public static readonly string[] Bool = { "eq", "neq" };
     public static readonly string[] Temporal = { "eq", "neq", "gt", "gte", "lt", "lte", "between" };
 }
@@ -154,7 +178,8 @@ public static class RuleAggregates
     {
         "count", "sum", "distinctCounterparties", "ratio", "rapidMovement", "dormancyDays", "profileRatio", "peerRatio",
         "newCustomers", "customersPerDevice", "cycle", "newCountries", "historyCount", "historySum", "historyRatio", "distinctCount", "reciprocalCount", "consecutiveDays", "newCounterpartyShare",
-        "sharedDeviceSenders", "typeShareChange", "minutesSinceEvent"
+        "sharedDeviceSenders", "typeShareChange", "minutesSinceEvent", "avgBalance", "minBalance", "balanceRetentionPct", "chain", "peerPercentile",
+        "benchmarkDeviation"
     };
     /// <summary>Aggregates computable from pre-computed daily aggregates (allowed for real-time evaluation).</summary>
     public static readonly string[] RealtimeAllowed = { "count", "sum" };
@@ -175,6 +200,9 @@ public static class RuleFieldRegistry
         ["txn.sourceCountry"] = Text, ["txn.destinationCountry"] = Text, ["txn.remarks"] = Text, ["txn.copResult"] = Text,
         ["txn.direction"] = Text, ["txn.isCrossBorder"] = Bool, ["txn.isOwnAccount"] = Bool,
         ["txn.isLinkedParty"] = Bool, ["txn.loginCountryMismatch"] = Bool,
+        ["txn.sourceCountryRisk"] = Text, ["txn.destinationCountryRisk"] = Text, ["txn.balanceSharePct"] = Number,
+        ["txn.invoiceAmount"] = Number, ["txn.invoiceVariancePct"] = Number, ["txn.hasInvoice"] = Bool, ["txn.goodsCategory"] = Text,
+        ["balance.previousDay"] = Number, ["customer.householdId"] = Text,
         ["customer.type"] = Text, ["customer.riskLevel"] = Text, ["customer.nationality"] = Text, ["customer.residence"] = Text,
         ["customer.status"] = Text, ["customer.region"] = Text, ["customer.isPep"] = Bool, ["customer.accountAgeDays"] = Number, ["customer.age"] = Number,
         ["profile.expectedMonthlyVolume"] = Number, ["profile.declaredMonthlyIncome"] = Number, ["profile.expectedMonthlyCount"] = Number,

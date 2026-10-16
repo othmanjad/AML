@@ -54,6 +54,10 @@ public sealed class TransactionMessage
     public string? IntermediaryInstitution { get; set; }
     public string? OrderingInstitution { get; set; }
     public string? Remarks { get; set; }
+    public string? InvoiceNumber { get; set; }
+    public decimal? InvoiceAmount { get; set; }
+    public string? InvoiceCurrency { get; set; }
+    public string? GoodsCategory { get; set; }
     public string? CopResult { get; set; }
     public string? DeviceId { get; set; }
     public string? IpAddress { get; set; }

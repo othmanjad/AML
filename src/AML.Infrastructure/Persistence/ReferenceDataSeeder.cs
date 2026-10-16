@@ -176,6 +176,8 @@ public sealed class ReferenceDataSeeder
         J("STR_FILING_DEADLINE", "2", "WorkingDays", "AML/CFT Law No. 20 of 2021 and AMLU instructions - TO BE CONFIRMED", "Reporting obligation - to be confirmed");
         J("RECORD_RETENTION_YEARS", "5", "Years", "FATF R.11 minimum; national retention period TO BE CONFIRMED", "Record keeping - to be confirmed");
         J("FREEZE_NOTIFICATION_HOURS", "24", "Hours", "National TFS freezing procedure - TO BE CONFIRMED", "Notification of frozen assets - to be confirmed");
+        J("CTR_THRESHOLD", "10000", "JOD", "Cash transaction reporting threshold - national requirement TO BE CONFIRMED", "Currency transaction report - to be confirmed");
+        J("CTR_FILING_DEADLINE", "15", "Days", "Cash transaction reporting deadline - national requirement TO BE CONFIRMED", "Currency transaction report - to be confirmed");
         J("R16_THRESHOLD", "1000", "USD", "FATF R.16 (revised June 2025) - national implementation TO BE CONFIRMED", "Originator/beneficiary information - to be confirmed");
 
         foreach (var (code, en, ar, order) in new[] { ("CORE_DETAILS", "Core details", "البيانات الأساسية", 1), ("FINANCIAL_PROFILE", "Financial profile", "الملف المالي", 2), ("KYC", "Identification / KYC", "التعريف / اعرف عميلك", 3),

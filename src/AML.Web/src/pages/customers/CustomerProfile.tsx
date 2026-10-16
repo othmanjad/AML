@@ -94,7 +94,7 @@ function Overview({ c }: { c: CustomerDetail }) {
         </Col>
       </AntRow>
       <Section title={t('profile.summary')}>
-        <KV data={c} keys={['customerType', 'status', 'externalId', 'sourceSystem', 'dueDiligenceLevel', 'acceptanceDecision', 'assignedOfficer', 'region', 'isPep', 'isFrozen', 'createdAt', 'updatedAt']} />
+        <KV data={c} keys={['customerType', 'status', 'externalId', 'sourceSystem', 'dueDiligenceLevel', 'acceptanceDecision', 'assignedOfficer', 'region', 'householdId', 'isPep', 'isFrozen', 'createdAt', 'updatedAt']} />
       </Section>
       <Section title={t('risk.whyTitle')} testId="why-risk-panel">
         <WhyRisk c={c} />

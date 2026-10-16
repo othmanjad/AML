@@ -508,7 +508,19 @@
   "windowStart": "Window start",
   "windowStartLocal": "Window start (local)",
   "windowStartUtc": "Window start (UTC)",
-  "windowType": "Window type"
+  "windowType": "Window type",
+  "customerName": "Customer",
+  "transactionCount": "Transactions",
+  "totalBaseAmount": "Total (base currency)",
+  "cashInBaseAmount": "Cash in",
+  "cashOutBaseAmount": "Cash out",
+  "threshold": "Threshold",
+  "submissionReference": "Submission reference",
+  "exportedAt": "Exported at",
+  "metric": "Metric",
+  "segmentField": "Segment field",
+  "segmentValue": "Segment value",
+  "householdId": "Household ID"
  },
  "app": {
   "title": "AML Compliance Platform"
@@ -720,7 +732,9 @@
   "transactions": "Transactions",
   "users": "Users, Roles & Permissions",
   "walletMappings": "Wallet Mapping",
-  "watchlists": "Watchlists"
+  "watchlists": "Watchlists",
+  "ctrReports": "Cash transaction reports",
+  "benchmarks": "Industry benchmarks"
  },
  "ops": {
   "correctedPayload": "Corrected payload (JSON, optional)",
@@ -752,7 +766,10 @@
   "between": "between",
   "in": "in list",
   "notIn": "not in list",
-  "contains": "contains"
+  "contains": "contains",
+  "multipleOf": "multiple of",
+  "inList": "in maintained list",
+  "notInList": "not in maintained list"
  },
  "profile": {
   "acceptance": "Acceptance decisions",
@@ -888,7 +905,13 @@
   "measures": {
    "count": "Count",
    "amount": "Amount"
-  }
+  },
+  "valueBy": "Threshold by attribute",
+  "valueByValues": "Thresholds (value=threshold)",
+  "minHopPct": "Min % per hop",
+  "peerBy": "Peer group by",
+  "minPeers": "Min peers",
+  "benchmark": "Benchmark metric"
  },
  "screening": {
   "confirmTransition": "Screening decisions are audited and may trigger freezing obligations. Confirm the new status.",
@@ -998,5 +1021,14 @@
   "mi-pack": "Management information pack",
   "institutional-risk": "Institutional risk-assessment extract",
   "analyst-quality": "Analyst quality"
+ },
+ "ctr": {
+  "generate": "Generate for a business date",
+  "generated": "Created {{created}}, refreshed {{updated}} (threshold {{threshold}})",
+  "notice": "Daily cash total per customer at or above the CTR threshold (jurisdiction value, to be confirmed by compliance). Reports are approved by the MLRO, exported and submitted manually; nothing is sent to the FIU automatically.",
+  "recordSubmission": "Record manual submission"
+ },
+ "benchmarks": {
+  "notice": "Benchmark values per customer segment for the benchmarkDeviation rule aggregate. Each value must cite its source; values are examples until confirmed by compliance."
  }
 }

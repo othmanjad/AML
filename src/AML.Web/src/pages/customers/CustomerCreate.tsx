@@ -12,7 +12,7 @@ import { dateProps } from '../../components/FormFields';
 import { tv } from '../../components/display';
 import { CUSTOMER_TYPES, SOURCE_SYSTEMS } from './CustomersList';
 
-const CORE_FIELDS = ['sourceSystem', 'externalId', 'customerType', 'nameLatin', 'nameArabic', 'dateOfBirth', 'nationalityCountry', 'residenceCountry', 'incorporationCountry', 'registrationDate', 'assignedOfficer', 'region', 'isPep'];
+const CORE_FIELDS = ['sourceSystem', 'externalId', 'customerType', 'nameLatin', 'nameArabic', 'dateOfBirth', 'nationalityCountry', 'residenceCountry', 'incorporationCountry', 'registrationDate', 'assignedOfficer', 'region', 'householdId', 'isPep'];
 
 export default function CustomerCreate() {
   const { t } = useTranslation();
@@ -118,6 +118,9 @@ export default function CustomerCreate() {
             </Form.Item>
             <Form.Item name="region" label={t('f.region')}>
               <Input data-testid="core-region" />
+            </Form.Item>
+            <Form.Item name="householdId" label={t('f.householdId')}>
+              <Input data-testid="core-householdId" dir="ltr" />
             </Form.Item>
             <Form.Item name="isPep" label={t('f.isPep')} valuePropName="checked">
               <Switch data-testid="core-isPep" />

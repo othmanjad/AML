@@ -64,7 +64,20 @@ public sealed class RuleExecutionService
             var links = def.Subject == "Entity"
                 ? await _db.Set<EntityLink>().IgnoreQueryFilters().AsNoTracking().Where(l => l.TenantId == v.TenantId && l.Status == "Linked" && l.Confidence >= def.EntityMinConfidence).ToListAsync(ct)
                 : null;
-            var subjects = BuildSubjects(def, txns, await CustomerTypesAsync(txns, v.TenantId, ct), links);
+            Dictionary<long, string>? households = null;
+            if (def.Subject == "Household")
+            {
+                var ids = txns.SelectMany(t => new[] { t.SenderCustomerId, t.ReceiverCustomerId }).Where(x => x != null).Select(x => x!.Value).Distinct().ToList();
+                households = new Dictionary<long, string>();
+                foreach (var chunk in ids.Chunk(1000))
+                {
+                    var part = chunk.ToList();
+                    foreach (var h in await _db.Set<Customer>().IgnoreQueryFilters().AsNoTracking().Where(c => c.TenantId == v.TenantId && part.Contains(c.Id) && c.HouseholdId != null)
+                                 .Select(c => new { c.Id, c.HouseholdId }).ToListAsync(ct))
+                        households[h.Id] = h.HouseholdId!;
+                }
+            }
+            var subjects = BuildSubjects(def, txns, await CustomerTypesAsync(txns, v.TenantId, ct), links, households);
             foreach (var s in subjects)
             {
                 // Matches sharing a deduplication key end up in the same alert, so they are merged during evaluation.
@@ -151,10 +164,41 @@ public sealed class RuleExecutionService
         return map;
     }
 
-    public static List<RuleSubjectData> BuildSubjects(RuleDefinition def, List<Transaction> txns, Dictionary<long, string> types, List<EntityLink>? links = null)
+    public static List<RuleSubjectData> BuildSubjects(RuleDefinition def, List<Transaction> txns, Dictionary<long, string> types, List<EntityLink>? links = null,
+        Dictionary<long, string>? households = null)
     {
         switch (def.Subject)
         {
+            case "Household":
+                // Members share the core system's household identifier; a customer without one is a household of its own.
+                // Transfers between members of the same household are internal and recorded once (sender side).
+                households ??= new();
+                string HKey(long c) => households.TryGetValue(c, out var h) ? "h:" + h : "c:" + c.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var byHousehold = new Dictionary<string, (HashSet<long> Members, List<RuleTxn> Txns)>();
+                void AddH(long c, Transaction t, string dir)
+                {
+                    var k = HKey(c);
+                    if (!byHousehold.TryGetValue(k, out var e)) byHousehold[k] = e = (new HashSet<long>(), new List<RuleTxn>());
+                    e.Members.Add(c);
+                    e.Txns.Add(RuleDataProvider.Project(t, dir));
+                }
+                foreach (var t in txns)
+                {
+                    if (t.SenderCustomerId is { } hs) AddH(hs, t, "out");
+                    if (t.ReceiverCustomerId is { } hr && hr != t.SenderCustomerId && (t.SenderCustomerId is not { } hs2 || HKey(hs2) != HKey(hr))) AddH(hr, t, "in");
+                }
+                return byHousehold.Select(kv =>
+                {
+                    var members = kv.Value.Members.OrderBy(x => x).ToList();
+                    var primary = members[0];
+                    return new RuleSubjectData
+                    {
+                        SubjectKey = kv.Key.StartsWith("h:") ? $"household:{kv.Key[2..]}" : $"customer:{primary}", SubjectType = "Household", CustomerId = primary,
+                        CustomerType = types.GetValueOrDefault(primary), Members = members,
+                        Context = new { householdId = kv.Key.StartsWith("h:") ? kv.Key[2..] : null, members },
+                        Transactions = kv.Value.Txns.OrderBy(t => t.TimestampUtc).ToList()
+                    };
+                }).ToList();
             case "Entity":
                 // Union-find over high-confidence entity-resolution links; each cluster is one subject.
                 var parent = new Dictionary<long, long>();
@@ -176,7 +220,7 @@ public sealed class RuleExecutionService
                         .Select(l => new { l.CustomerAId, l.CustomerBId, l.LinkType, l.Confidence, l.Evidence, l.RuleVersion }).ToList();
                     return new RuleSubjectData
                     {
-                        SubjectKey = $"entity:{kv.Key}", SubjectType = "Entity", CustomerId = kv.Key, CustomerType = types.GetValueOrDefault(kv.Key),
+                        SubjectKey = $"entity:{kv.Key}", SubjectType = "Entity", CustomerId = kv.Key, CustomerType = types.GetValueOrDefault(kv.Key), Members = members,
                         Context = new { members, links = memberLinks, minConfidence = def.EntityMinConfidence }, Transactions = kv.Value.OrderBy(t => t.TimestampUtc).ToList()
                     };
                 }).ToList();
@@ -201,7 +245,7 @@ public sealed class RuleExecutionService
                 }
                 return byWallet.Select(kv => new RuleSubjectData
                 {
-                    SubjectKey = $"wallet:{kv.Key}", SubjectType = "Wallet", CustomerId = kv.Value.Owner,
+                    SubjectKey = $"wallet:{kv.Key}", SubjectType = "Wallet", CustomerId = kv.Value.Owner, WalletExternalId = kv.Key,
                     CustomerType = kv.Value.Owner is { } o ? types.GetValueOrDefault(o) : null, Transactions = kv.Value.Txns.OrderBy(t => t.TimestampUtc).ToList()
                 }).ToList();
             default:
@@ -217,7 +261,7 @@ public sealed class RuleExecutionService
                         (unresolved.TryGetValue(rw, out var u2) ? u2 : unresolved[rw] = new()).Add(RuleDataProvider.Project(t, "in"));
                 }
                 return dict.Select(kv => new RuleSubjectData { SubjectKey = $"customer:{kv.Key}", SubjectType = "Customer", CustomerId = kv.Key, CustomerType = types.GetValueOrDefault(kv.Key), Transactions = kv.Value.OrderBy(t => t.TimestampUtc).ToList() })
-                    .Concat(unresolved.Select(kv => new RuleSubjectData { SubjectKey = $"wallet:{kv.Key}", SubjectType = "Wallet", Transactions = kv.Value.OrderBy(t => t.TimestampUtc).ToList() }))
+                    .Concat(unresolved.Select(kv => new RuleSubjectData { SubjectKey = $"wallet:{kv.Key}", SubjectType = "Wallet", WalletExternalId = kv.Key, Transactions = kv.Value.OrderBy(t => t.TimestampUtc).ToList() }))
                     .ToList();
         }
     }

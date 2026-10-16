@@ -9,7 +9,9 @@ public static class RuleValidator
     public const int MaxDepth = 6;
     public const int MaxNodes = 50;
     private static readonly string[] SignalEvents = { "Registration", "Login", "SimChange", "PhoneChange", "EmailChange", "AddressChange", "PasswordReset", "BeneficiaryAdded", "DeviceChangeApproved" };
-    private static readonly string[] Subjects = { "Customer", "Wallet", "Agent", "Device", "Entity" };
+    private static readonly string[] Subjects = { "Customer", "Wallet", "Agent", "Device", "Entity", "Household" };
+    private static readonly string[] PeerAttributes = { "customer.type", "customer.region", "customer.residence", "customer.nationality", "customer.riskLevel" };
+    private static readonly System.Text.RegularExpressions.Regex ListReference = new("^[A-Z0-9_]{1,50}(:[A-Za-z0-9_]{1,50})?$");
     private static readonly string[] DedupComponents = { "rule", "version", "subject", "day", "window", "evidenceGroup" };
     private static readonly string[] Severities = { "Low", "Medium", "High", "Critical" };
     private static readonly string[] Statuses = { "Pending", "Completed", "Failed", "Reversed", "PartiallyReversed", "Held" };
@@ -20,7 +22,7 @@ public static class RuleValidator
     private static readonly string[] AllowedNodeProperties =
     {
         "op", "conditions", "field", "operator", "value", "aggregate", "filter", "numerator", "denominator", "measure", "direction",
-        "maxMinutes", "profileField", "peerGroup", "maxDepth", "label", "of", "dailyRange", "event"
+        "maxMinutes", "profileField", "peerGroup", "maxDepth", "label", "of", "dailyRange", "event", "peerBy", "minPeers", "minHopPct", "benchmark", "valueBy"
     };
 
     /// <summary>Validates raw JSON (structure, unknown properties) and the typed model.</summary>
@@ -190,6 +192,7 @@ public static class RuleValidator
             if (n.Operator is null || !RuleOperators.Numeric.Contains(n.Operator) || n.Operator is "in" or "notIn")
                 errors.Add(new(path + ".operator", $"Aggregate '{n.Aggregate}' requires a numeric comparison operator (eq, neq, gt, gte, lt, lte, between)."));
             else ValidateValue(n, path, RuleFieldRegistry.Number, errors);
+            ValidateValueBy(n, path, dyn, errors);
             if (n.Filter is not null) ValidateNode(n.Filter, path + ".filter", depth + 1, dyn, errors, ref count, ref hasAggregate, def, inFilter: true);
             if (n.Direction is not null && n.Direction is not ("in" or "out" or "any")) errors.Add(new(path + ".direction", "Direction must be in, out or any."));
             switch (n.Aggregate)
@@ -207,8 +210,30 @@ public static class RuleValidator
                     if (n.ProfileField is null || RuleFieldRegistry.Resolve(n.ProfileField, dyn) != RuleFieldRegistry.Number)
                         errors.Add(new(path + ".profileField", $"profileRatio requires a numeric profile field; '{n.ProfileField}' is unknown or not numeric."));
                     break;
+                case "peerRatio" when n.PeerBy is not null:
+                case "peerPercentile":
+                    ValidatePeerBy(n, path, dyn, errors, def);
+                    break;
                 case "peerRatio":
                     if (n.PeerGroup is not (null or "typeAndRegion" or "type")) errors.Add(new(path + ".peerGroup", "peerGroup must be typeAndRegion or type."));
+                    break;
+                case "avgBalance":
+                case "minBalance":
+                case "balanceRetentionPct":
+                    if (def.Subject is "Agent" or "Device") errors.Add(new(path, $"{n.Aggregate} requires a Customer, Wallet, Entity or Household subject."));
+                    break;
+                case "chain":
+                    if (n.MaxDepth is null or < 2 or > 10) errors.Add(new(path + ".maxDepth", "chain requires maxDepth (hops) between 2 and 10."));
+                    if (n.MaxMinutes is null or <= 0 or > 10080) errors.Add(new(path + ".maxMinutes", "chain requires maxMinutes (per hop) between 1 and 10080."));
+                    if (n.MinHopPct is { } mh && (mh <= 0 || mh > 100)) errors.Add(new(path + ".minHopPct", "minHopPct must be within (0, 100]."));
+                    if (def.Subject is not ("Customer" or "Entity" or "Household")) errors.Add(new(path, "chain requires a Customer, Entity or Household subject."));
+                    break;
+                case "benchmarkDeviation":
+                    if (n.Benchmark is null || !ListReference.IsMatch(n.Benchmark) || n.Benchmark.Contains(':')) errors.Add(new(path + ".benchmark", "benchmarkDeviation requires a benchmark metric code (A-Z, 0-9, _)."));
+                    if (n.Numerator is not null) ValidateNode(n.Numerator, path + ".numerator", depth + 1, dyn, errors, ref count, ref hasAggregate, def, inFilter: true);
+                    if (n.Denominator is not null) ValidateNode(n.Denominator, path + ".denominator", depth + 1, dyn, errors, ref count, ref hasAggregate, def, inFilter: true);
+                    if (n.Measure is not null && n.Measure is not ("count" or "amount")) errors.Add(new(path + ".measure", "Measure must be count or amount."));
+                    if (def.Subject != "Customer") errors.Add(new(path, "benchmarkDeviation requires the Customer subject."));
                     break;
                 case "cycle":
                     if (n.MaxDepth is null or < 2 or > 6) errors.Add(new(path + ".maxDepth", "cycle requires maxDepth between 2 and 6."));
@@ -256,7 +281,41 @@ public static class RuleValidator
             errors.Add(new(path + ".operator", $"Operator '{n.Operator}' is not compatible with {type} field '{n.Field}'."));
             return;
         }
+        if (n.Operator is "inList" or "notInList")
+        {
+            if (n.Value is not { ValueKind: JsonValueKind.String } lv || !ListReference.IsMatch(lv.GetString()!))
+                errors.Add(new(path + ".value", $"{n.Operator} requires a lookup reference \"CATEGORY\" or \"CATEGORY:ATTRIBUTE\" (e.g. COUNTRY:HighRisk)."));
+            if (n.ValueBy is not null) errors.Add(new(path + ".valueBy", "valueBy is not allowed with list operators."));
+            return;
+        }
         ValidateValue(n, path, type, errors);
+        ValidateValueBy(n, path, dyn, errors);
+    }
+
+    private static void ValidateValueBy(ConditionNode n, string path, IReadOnlyDictionary<string, string>? dyn, List<RuleValidationError> errors)
+    {
+        if (n.ValueBy is not { } vb) return;
+        if (n.Operator is not ("eq" or "neq" or "gt" or "gte" or "lt" or "lte"))
+            errors.Add(new(path + ".valueBy", "valueBy requires a single-value comparison (eq, neq, gt, gte, lt, lte)."));
+        if (n.Value is not { ValueKind: JsonValueKind.Number })
+            errors.Add(new(path + ".value", "valueBy requires a numeric default value (used when the attribute has no entry)."));
+        var t = RuleFieldRegistry.Resolve(vb.Field, dyn);
+        if (t is null) errors.Add(new(path + ".valueBy.field", $"Unknown field '{vb.Field}': not present in the data-source registry."));
+        else if (t != RuleFieldRegistry.Text) errors.Add(new(path + ".valueBy.field", $"valueBy requires a text attribute; '{vb.Field}' is {t}."));
+        if (vb.Values.Count == 0 || vb.Values.Count > 50) errors.Add(new(path + ".valueBy.values", "valueBy requires between 1 and 50 values."));
+        if (vb.Values.Keys.Any(k => string.IsNullOrWhiteSpace(k) || k.Length > 100)) errors.Add(new(path + ".valueBy.values", "valueBy keys must be non-empty (max 100 characters)."));
+    }
+
+    private static void ValidatePeerBy(ConditionNode n, string path, IReadOnlyDictionary<string, string>? dyn, List<RuleValidationError> errors, RuleDefinition def)
+    {
+        if (n.PeerBy is not { Count: > 0 and <= 4 }) errors.Add(new(path + ".peerBy", "peerBy requires 1 to 4 customer attributes."));
+        foreach (var a in n.PeerBy ?? new())
+            if (!PeerAttributes.Contains(a) && !(a.StartsWith("field:", StringComparison.Ordinal) && RuleFieldRegistry.Resolve(a, dyn) is not null))
+                errors.Add(new(path + ".peerBy", $"Unsupported peer attribute '{a}'. Allowed: {string.Join(", ", PeerAttributes)} or field:CODE."));
+        if (n.MinPeers is { } mp && (mp < 1 || mp > 100000)) errors.Add(new(path + ".minPeers", "minPeers must be between 1 and 100000."));
+        if (n.Measure is not null && n.Measure is not ("count" or "amount")) errors.Add(new(path + ".measure", "Measure must be count or amount."));
+        if (def.Window is not { Type: "Calendar" }) errors.Add(new("$.window", $"{n.Aggregate} with peerBy compares calendar periods: a Calendar window (Day, Week or Month) is required."));
+        if (def.Subject != "Customer") errors.Add(new(path, $"{n.Aggregate} with peerBy requires the Customer subject."));
     }
 
     private static void ValidateValue(ConditionNode n, string path, string type, List<RuleValidationError> errors)
@@ -315,6 +374,8 @@ public static class RuleValidator
     {
         if (n.Field is not null) yield return n.Field;
         if (n.ProfileField is not null) yield return n.ProfileField;
+        if (n.ValueBy is not null) yield return n.ValueBy.Field;
+        foreach (var p in n.PeerBy ?? new()) yield return p;
         foreach (var c in n.Conditions ?? new()) foreach (var f in Walk(c)) yield return f;
         foreach (var c in new[] { n.Filter, n.Numerator, n.Denominator })
             if (c is not null) foreach (var f in Walk(c)) yield return f;

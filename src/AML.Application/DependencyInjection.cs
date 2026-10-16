@@ -42,6 +42,7 @@ public static class DependencyInjection
         s.AddScoped<AlertFactory>();
         s.AddScoped<AlertService>();
         s.AddScoped<IngestionService>();
+        s.AddScoped<BalanceService>();
         s.AddScoped<TransactionQueryService>();
         s.AddScoped<WalletService>();
         s.AddScoped<RuleExecutionService>();
@@ -51,6 +52,8 @@ public static class DependencyInjection
         s.AddScoped<CaseService>();
         s.AddScoped<RealtimeService>();
         s.AddScoped<RegulatoryReportService>();
+        s.AddScoped<CtrService>();
+        s.AddScoped<BenchmarkService>();
         s.AddScoped<AuthorityRequestService>();
         s.AddScoped<EntityResolutionService>();
         s.AddScoped<EffectivenessService>();

@@ -326,3 +326,43 @@ public sealed class ActionsController : AmlController
     [HttpGet("/api/realtime/decisions"), HasPermission(Perm.HoldsWork)]
     public Task<object> Decisions([FromServices] RealtimeService rt, int take = 100, CancellationToken ct = default) => rt.DecisionsAsync(take, ct);
 }
+
+[Route("api/ctr-reports")]
+public sealed class CtrReportsController : AmlController
+{
+    private readonly CtrService _svc;
+    public CtrReportsController(CtrService svc) => _svc = svc;
+
+    [HttpGet, HasPermission(Perm.StrPrepare)]
+    public Task<List<object>> List(string? status, DateOnly? from, DateOnly? to, CancellationToken ct) => _svc.ListAsync(status, from, to, ct);
+
+    [HttpGet("{id:long}"), HasPermission(Perm.StrPrepare)]
+    public Task<object> Get(long id, CancellationToken ct) => _svc.GetAsync(id, ct);
+
+    public sealed record GenerateRequest(DateOnly BusinessDate);
+
+    [HttpPost("generate"), HasPermission(Perm.StrPrepare)]
+    public Task<CtrService.GenerateResult> Generate([FromBody] GenerateRequest r, CancellationToken ct) => _svc.GenerateAsync(r.BusinessDate, ct);
+
+    public sealed record CommentRequest(string? Comment);
+
+    [HttpPost("{id:long}/approve"), HasPermission(Perm.StrApprove)]
+    public Task<object> Approve(long id, [FromBody] CommentRequest? r, CancellationToken ct) => _svc.ApproveAsync(id, r?.Comment, ct);
+
+    public sealed record ReasonRequest(string Reason);
+
+    [HttpPost("{id:long}/reject"), HasPermission(Perm.StrApprove)]
+    public Task<object> Reject(long id, [FromBody] ReasonRequest r, CancellationToken ct) => _svc.RejectAsync(id, r.Reason, ct);
+
+    [HttpGet("{id:long}/export"), HasPermission(Perm.StrSubmit)]
+    public async Task<IActionResult> Export(long id, string format = "xml", CancellationToken ct = default)
+    {
+        var (content, type, file) = await _svc.ExportAsync(id, format, ct);
+        return File(System.Text.Encoding.UTF8.GetBytes(content), type + "; charset=utf-8", file);
+    }
+
+    public sealed record SubmissionRequest(string Reference);
+
+    [HttpPost("{id:long}/manual-submission"), HasPermission(Perm.StrSubmit)]
+    public Task<object> Manual(long id, [FromBody] SubmissionRequest r, CancellationToken ct) => _svc.RecordSubmissionAsync(id, r.Reference, ct);
+}

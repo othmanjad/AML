@@ -31,6 +31,9 @@ public sealed class RuleTxn
     public string? Remarks { get; init; }
     public string? DeviceId { get; init; }
     public string? CopResult { get; init; }
+    public decimal? InvoiceAmount { get; init; }
+    public string? InvoiceCurrency { get; init; }
+    public string? GoodsCategory { get; init; }
     public decimal ReversedAmount { get; init; }
     public bool IsReversal { get; init; }
     /// <summary>in / out relative to the subject (customer subjects); "any" otherwise.</summary>
@@ -48,6 +51,10 @@ public sealed class RuleSubjectData
     public long? CustomerId { get; init; }
     public string? CustomerType { get; init; }
     public string? DeviceId { get; init; }
+    /// <summary>Wallet subjects: the wallet's external identifier.</summary>
+    public string? WalletExternalId { get; init; }
+    /// <summary>Entity / Household subjects: all member customers (CustomerId is the primary member).</summary>
+    public IReadOnlyList<long>? Members { get; init; }
     /// <summary>Optional subject description written to alert evidence (e.g. entity members and the links that join them).</summary>
     public object? Context { get; init; }
     /// <summary>All subject transactions in the evaluation range plus lookback, sorted ascending by time.</summary>
@@ -67,7 +74,24 @@ public interface IRuleDataProvider
     IReadOnlyList<RuleSignal> GetSignals(long customerId) => Array.Empty<RuleSignal>();
     /// <summary>Devices a customer has used (signals and transactions).</summary>
     IReadOnlyList<string> GetDevices(long customerId) => Array.Empty<string>();
+    /// <summary>
+    /// End-of-day base-currency balances per business date in [from, to] for a customer (summed over its wallets) or, when
+    /// walletExternalId is given, for that wallet. Dates without a reported balance (or with a missing FX rate) are absent.
+    /// </summary>
+    IReadOnlyDictionary<DateOnly, decimal> GetBalances(long? customerId, string? walletExternalId, DateOnly from, DateOnly to) => new Dictionary<DateOnly, decimal>();
+    /// <summary>Codes of an active lookup list: "CATEGORY" or "CATEGORY:ATTRIBUTE".</summary>
+    IReadOnlySet<string> GetLookupCodes(string reference) => new HashSet<string>();
+    /// <summary>Risk attribute of a country from the COUNTRY lookup (e.g. HighRisk, Elevated); "Standard" when none; null for unknown codes.</summary>
+    string? GetCountryRisk(string? country) => null;
+    /// <summary>The subject's peer group: a signature of the shared attribute values and the members (subject included).</summary>
+    (string Signature, IReadOnlyList<long> Members)? GetPeerGroup(long customerId, IReadOnlyList<string> peerBy) => null;
+    /// <summary>Transactions of the given customers in (from, to], one entry per customer side with direction relative to that customer.</summary>
+    IReadOnlyList<(long CustomerId, RuleTxn Txn)> GetCustomerTransactions(IReadOnlyCollection<long> customerIds, DateTime fromUtc, DateTime toUtc) => Array.Empty<(long, RuleTxn)>();
+    /// <summary>Industry benchmark of a metric for the segment the customer belongs to (as of a time).</summary>
+    RuleBenchmark? GetBenchmark(string metric, long customerId, DateTime asOfUtc) => null;
 }
+
+public sealed record RuleBenchmark(string Metric, string SegmentField, string SegmentValue, decimal Value, string? Source);
 
 /// <summary>A customer signal; IsRoaming marks logins from allow-listed carrier/roaming IP ranges (location not reliable).</summary>
 public sealed record RuleSignal(string DeviceId, string? IpAddress, string? GeoCountry, string EventType, DateTime OccurredAt, bool IsRoaming = false);
@@ -156,7 +180,7 @@ public sealed class RuleEvaluator
                 var calendar = def.Window?.Type == "Calendar";
                 var lo = calendar ? LowerBound(times, ws) : UpperBound(times, ws);
                 var hi = UpperBound(times, we);
-                var ctx = new EvalContext(def, subject, trigger, idx, eligible, lo, Math.Max(lo, hi), ws, we, data, _tz, cache) { Result = result, Times = times };
+                var ctx = new EvalContext(def, subject, trigger, idx, eligible, lo, Math.Max(lo, hi), ws, we, data, _tz, cache) { Result = result, Times = times, BucketEnd = calendar ? bucketEnd : we };
                 var match = new RuleMatch
                 {
                     Trigger = trigger,
@@ -400,6 +424,8 @@ public sealed class RuleEvaluator
         public NodeCache Cache { get; }
         public RuleEvaluationResult? Result { get; init; }
         public DateTime[] Times { get; init; } = Array.Empty<DateTime>();
+        /// <summary>Calendar windows: end of the period containing the trigger (equals WindowEnd for rolling windows).</summary>
+        public DateTime BucketEnd { get; init; }
         private List<RuleTxn>? _window;
         /// <summary>Eligible subject transactions in the window (materialised on first use).</summary>
         public List<RuleTxn> Window => _window ??= AllEligible.GetRange(Lo, Hi - Lo);
@@ -414,7 +440,7 @@ public sealed class RuleEvaluator
         }
         if (n.IsAggregate) return EvalAggregate(n, ctx, match);
         var actual = FieldValue(n.Field!, ctx.Trigger, ctx);
-        var ok = Compare(actual, n.Operator!, n.Value!.Value);
+        var ok = Cmp(actual, n, ctx.Trigger, ctx, match, n.Field!);
         // Optional inputs (e.g. "flag neq true") are satisfied by a missing value; only a failed condition is incomplete.
         if (!ok && actual is null && !n.Field!.StartsWith("txn.", StringComparison.Ordinal) && !n.Field.StartsWith(RuleFieldRegistry.CounterpartyPrefix, StringComparison.Ordinal) && ctx.Subject.CustomerId is not null) ctx.Result?.MissingInputs.Add(n.Field);
         match.Conditions.Add(new MatchedCondition($"{n.Field} {n.Operator} {Show(n.Value)}", Fmt(actual), Show(n.Value), ok));
@@ -441,6 +467,16 @@ public sealed class RuleEvaluator
         "txn.isOwnAccount" => t.SenderCustomerId is not null && t.SenderCustomerId == t.ReceiverCustomerId,
         "txn.isLinkedParty" => ctx.Subject.CustomerId is { } lc && (t.Direction == "in" ? t.SenderCustomerId : t.ReceiverCustomerId) is { } cp && cp != lc && ctx.Data.GetLinkedCustomers(lc).Contains(cp),
         "txn.loginCountryMismatch" => LoginCountryMismatch(t, ctx),
+        "txn.sourceCountryRisk" => t.SourceCountry is null ? null : ctx.Data.GetCountryRisk(t.SourceCountry),
+        "txn.destinationCountryRisk" => t.DestinationCountry is null ? null : ctx.Data.GetCountryRisk(t.DestinationCountry),
+        "txn.invoiceAmount" => t.InvoiceAmount,
+        "txn.hasInvoice" => t.InvoiceAmount is not null,
+        "txn.goodsCategory" => t.GoodsCategory,
+        // Payment amount versus the declared invoice (same currency only; different currencies are not compared).
+        "txn.invoiceVariancePct" => t.InvoiceAmount is > 0 && string.Equals(t.InvoiceCurrency, t.Currency, StringComparison.OrdinalIgnoreCase)
+            ? Math.Round((EffectiveAmount(ctx.Def, t) - t.InvoiceAmount.Value) / t.InvoiceAmount.Value * 100, 4) : null,
+        "balance.previousDay" => PreviousBalance(t, ctx)?.Balance,
+        "txn.balanceSharePct" => BalanceShare(t, ctx),
         _ when field.StartsWith(RuleFieldRegistry.CounterpartyPrefix, StringComparison.Ordinal) =>
             ctx.Data.GetAttribute(t.Direction == "in" ? t.SenderCustomerId : t.ReceiverCustomerId, RuleFieldRegistry.MapCounterparty(field), t.TimestampUtc),
         _ => ctx.Data.GetAttribute(ctx.Subject.CustomerId, field, t.TimestampUtc)
@@ -455,6 +491,41 @@ public sealed class RuleEvaluator
         return login is not null && !string.Equals(login.GeoCountry, t.SourceCountry, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>Days before the transaction's business date searched for the latest reported end-of-day balance.</summary>
+    public const int BalanceSearchDays = 7;
+
+    private static IReadOnlyDictionary<DateOnly, decimal> SubjectBalances(EvalContext ctx, DateOnly from, DateOnly to)
+    {
+        if (ctx.Subject.WalletExternalId is { } w) return ctx.Data.GetBalances(null, w, from, to);
+        if (ctx.Subject.Members is { Count: > 0 } members)
+        {
+            var total = new Dictionary<DateOnly, decimal>();
+            foreach (var m in members)
+                foreach (var kv in ctx.Data.GetBalances(m, null, from, to)) total[kv.Key] = total.GetValueOrDefault(kv.Key) + kv.Value;
+            return total;
+        }
+        return ctx.Subject.CustomerId is { } c ? ctx.Data.GetBalances(c, null, from, to) : new Dictionary<DateOnly, decimal>();
+    }
+
+    /// <summary>Latest end-of-day balance before the transaction's local business date (searched back BalanceSearchDays days).</summary>
+    private (DateOnly Date, decimal Balance)? PreviousBalance(RuleTxn t, EvalContext ctx)
+    {
+        var day = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(t.TimestampUtc, ctx.Tz));
+        var b = SubjectBalances(ctx, day.AddDays(-BalanceSearchDays), day.AddDays(-1));
+        if (b.Count == 0) { if (ctx.Subject.CustomerId is not null || ctx.Subject.WalletExternalId is not null) ctx.Result?.MissingInputs.Add("balance.previousDay"); return null; }
+        var last = b.Keys.Max();
+        return (last, b[last]);
+    }
+
+    /// <summary>Transaction base amount as a percentage of the previous end-of-day balance.</summary>
+    private decimal? BalanceShare(RuleTxn t, EvalContext ctx)
+    {
+        var b = PreviousBalance(t, ctx);
+        var amount = EffectiveBase(ctx.Def, t);
+        if (b is not { Balance: > 0 } pb || amount is null) return null;
+        return Math.Round(amount.Value / pb.Balance * 100, 4);
+    }
+
     private bool FilterMatches(ConditionNode? filter, RuleTxn t, EvalContext ctx)
     {
         if (filter is null) return true;
@@ -463,7 +534,41 @@ public sealed class RuleEvaluator
             var r = filter.Conditions!.Select(c => FilterMatches(c, t, ctx));
             return filter.Op == "and" ? r.All(x => x) : r.Any(x => x);
         }
-        return Compare(FieldValue(filter.Field!, t, ctx), filter.Operator!, filter.Value!.Value);
+        return Cmp(FieldValue(filter.Field!, t, ctx), filter, t, ctx, null, filter.Field!);
+    }
+
+    /// <summary>
+    /// Compares with the condition's value, resolving a threshold chosen by attribute (valueBy) and lookup-list references
+    /// (inList / notInList). The chosen threshold is written to the evidence when a match is given.
+    /// </summary>
+    private bool Cmp(object? actual, ConditionNode n, RuleTxn t, EvalContext ctx, RuleMatch? match, string label)
+    {
+        var expected = n.Value!.Value;
+        if (n.ValueBy is { } vb)
+        {
+            var keyRaw = FieldValue(vb.Field, t, ctx);
+            var key = keyRaw is null ? null : Convert.ToString(keyRaw, CultureInfo.InvariantCulture);
+            decimal? chosen = null;
+            if (key is not null)
+                foreach (var kv in vb.Values)
+                    if (string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase)) { chosen = kv.Value; break; }
+            if (chosen is { } cv) expected = JsonSerializer.SerializeToElement(cv);
+            if (match is not null)
+                match.Evidence[$"{label}.threshold"] = new Dictionary<string, object?>
+                {
+                    ["by"] = vb.Field, ["key"] = key, ["value"] = chosen ?? (expected.ValueKind == JsonValueKind.Number ? expected.GetDecimal() : null), ["default"] = chosen is null
+                };
+        }
+        if (n.Operator is "inList" or "notInList")
+        {
+            var reference = expected.GetString() ?? "";
+            var codes = ctx.Data.GetLookupCodes(reference);
+            var vals = actual is IEnumerable<string> l ? l.ToList() : actual is null ? new List<string>() : new List<string> { Convert.ToString(actual, CultureInfo.InvariantCulture) ?? "" };
+            var any = vals.Any(v => codes.Contains(v));
+            if (match is not null) match.Evidence[$"{label}.list"] = new Dictionary<string, object?> { ["reference"] = reference, ["size"] = codes.Count };
+            return n.Operator == "inList" ? any : !any;
+        }
+        return Compare(actual, n.Operator!, expected);
     }
 
     private bool EvalAggregate(ConditionNode n, EvalContext ctx, RuleMatch match)
@@ -677,6 +782,9 @@ public sealed class RuleEvaluator
                 match.Evidence[$"{label}.profileField"] = n.ProfileField;
                 match.Evidence[$"{label}.profileValue"] = profile;
                 break;
+            case "peerRatio" when n.PeerBy is { Count: > 0 }:
+                if (PeerValues(n, ctx, match, label) is { } pr && Median(pr.Peers) is { } pm && pm > 0) value = Math.Round(pr.Subject / pm, 4);
+                break;
             case "peerRatio":
                 var subjectValue = set.Sum(t => EffectiveBase(ctx.Def, t) ?? 0);
                 var peers = ctx.Subject.CustomerId is { } cid ? ctx.Data.GetPeerValues(cid, n.PeerGroup ?? "typeAndRegion", ctx.WindowStart, ctx.WindowEnd) : Array.Empty<decimal>();
@@ -705,6 +813,74 @@ public sealed class RuleEvaluator
                     used = path;
                 }
                 break;
+            case "avgBalance":
+            case "minBalance":
+            case "balanceRetentionPct":
+                // End-of-day balances on the local business days covered by the window (days without a report are skipped).
+                var d0 = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(ctx.WindowStart, ctx.Tz));
+                var d1 = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(ctx.WindowEnd, ctx.Tz));
+                var bal = SubjectBalances(ctx, d0, d1);
+                match.Evidence[$"{label}.daysWithBalance"] = bal.Count;
+                match.Evidence[$"{label}.daysInWindow"] = d1.DayNumber - d0.DayNumber + 1;
+                match.Evidence[$"{label}.balances"] = bal.OrderBy(kv => kv.Key).Take(62).ToDictionary(kv => kv.Key.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), kv => kv.Value);
+                if (bal.Count == 0)
+                {
+                    if (ctx.Subject.CustomerId is not null || ctx.Subject.WalletExternalId is not null) ctx.Result?.MissingInputs.Add("balance");
+                    used = new List<RuleTxn>();
+                    break;
+                }
+                var avg = Math.Round(bal.Values.Average(), 4);
+                if (n.Aggregate == "avgBalance") { value = avg; used = new List<RuleTxn>(); }
+                else if (n.Aggregate == "minBalance") { value = bal.Values.Min(); used = new List<RuleTxn>(); }
+                else
+                {
+                    var inflow = set.Where(t => t.Direction is "in" or "any").ToList();
+                    var inSum = inflow.Sum(t => EffectiveBase(ctx.Def, t) ?? 0);
+                    match.Evidence[$"{label}.averageBalance"] = avg;
+                    match.Evidence[$"{label}.inflow"] = inSum;
+                    if (inSum > 0) value = Math.Round(avg / inSum * 100, 4);
+                    used = inflow;
+                }
+                break;
+            case "chain":
+                var chain = FindChain(n, ctx);
+                value = chain?.Count ?? 0;
+                if (chain is not null)
+                {
+                    match.Evidence[$"{label}.path"] = chain.Select(e => $"{e.SenderCustomerId}->{e.ReceiverCustomerId} {e.BaseAmount} ({e.SourceTransactionId})").ToList();
+                    match.Evidence[$"{label}.customers"] = chain.Select(e => e.SenderCustomerId).Append(chain[^1].ReceiverCustomerId).ToList();
+                    used = chain;
+                }
+                match.Evidence[$"{label}.maxMinutesPerHop"] = n.MaxMinutes;
+                match.Evidence[$"{label}.minHopPct"] = n.MinHopPct ?? DefaultMinHopPct;
+                break;
+            case "peerPercentile":
+                var pp = PeerValues(n, ctx, match, label);
+                if (pp is { } p0)
+                {
+                    var below = p0.Peers.Count(x => x < p0.Subject);
+                    value = Math.Round(below * 100m / p0.Peers.Count, 2);
+                }
+                break;
+            case "benchmarkDeviation":
+                if (ctx.Subject.CustomerId is not { } bcid) break;
+                decimal? metric = null;
+                if (n.Numerator is not null)
+                {
+                    var bden = n.Denominator is null ? set : set.Where(t => FilterMatches(n.Denominator, t, ctx)).ToList();
+                    var bnum = (n.Denominator is null ? bden : set).Where(t => FilterMatches(n.Numerator, t, ctx)).ToList();
+                    decimal M(List<RuleTxn> l) => n.Measure == "count" ? l.Count : l.Sum(t => EffectiveBase(ctx.Def, t) ?? 0);
+                    if (M(bden) != 0) metric = Math.Round(M(bnum) / M(bden) * 100, 4);
+                    match.Evidence[$"{label}.numerator"] = M(bnum);
+                    match.Evidence[$"{label}.denominator"] = M(bden);
+                }
+                else metric = n.Measure == "count" ? set.Count : set.Sum(t => EffectiveBase(ctx.Def, t) ?? 0);
+                var bm = ctx.Data.GetBenchmark(n.Benchmark!, bcid, ctx.Trigger.TimestampUtc);
+                match.Evidence[$"{label}.subjectMetric"] = metric;
+                if (bm is null) { ctx.Result?.MissingInputs.Add($"benchmark:{n.Benchmark}"); break; }
+                match.Evidence[$"{label}.benchmark"] = new Dictionary<string, object?> { ["metric"] = bm.Metric, ["segmentField"] = bm.SegmentField, ["segmentValue"] = bm.SegmentValue, ["value"] = bm.Value, ["source"] = bm.Source };
+                if (metric is not null && bm.Value != 0) value = Math.Round((metric.Value - bm.Value) / bm.Value * 100, 4);
+                break;
             case "newCountries":
                 var lookbackStart = ctx.WindowStart.AddDays(-ctx.Def.LookbackDays);
                 var history = ctx.AllEligible.Where(t => t.TimestampUtc >= lookbackStart && t.TimestampUtc <= ctx.WindowStart)
@@ -718,7 +894,7 @@ public sealed class RuleEvaluator
                 match.Evidence[$"{label}.historicalCountries"] = history.ToList();
                 break;
         }
-        var ok = value is not null && Compare(value, n.Operator!, n.Value!.Value);
+        var ok = value is not null && Cmp(value, n, ctx.Trigger, ctx, match, label);
         match.Conditions.Add(new MatchedCondition(
             $"{n.Aggregate}{(n.Filter is null ? "" : "[filtered]")}{(n.Direction is null ? "" : $"({n.Direction})")} within window {n.Operator} {Show(n.Value)}",
             value is null ? "undefined" : Fmt(value), Show(n.Value), ok));
@@ -750,6 +926,124 @@ public sealed class RuleEvaluator
         var l = new List<RuleTxn>();
         for (var i = ctx.Lo; i < ctx.Hi; i++) if (p[i]) l.Add(ctx.AllEligible[i]);
         return l;
+    }
+
+    public const decimal DefaultMinHopPct = 50m;
+
+    /// <summary>
+    /// Longest time-ordered chain of transfers between distinct customers that passes through one of the subject's transfers in
+    /// the window: each hop leaves the previous receiver within maxMinutes and carries at least minHopPct of the previous hop's amount.
+    /// Returns the hops (at most maxDepth) or null when the subject has no transfer in the window.
+    /// </summary>
+    private static List<RuleTxn>? FindChain(ConditionNode n, EvalContext ctx)
+    {
+        var subjects = ctx.Subject.Members is { Count: > 0 } mem ? mem.ToHashSet() : ctx.Subject.CustomerId is { } c0 ? new HashSet<long> { c0 } : null;
+        if (subjects is null) return null;
+        var gap = TimeSpan.FromMinutes(n.MaxMinutes ?? 1440);
+        var minPct = (n.MinHopPct ?? DefaultMinHopPct) / 100m;
+        var maxHops = n.MaxDepth ?? 4;
+        // Later hops follow the subject's transfer, so the search extends (maxDepth − 1) × maxMinutes past the window end
+        // (bounded by the data available at evaluation time). Edges are cached per whole UTC day range.
+        var horizon = ctx.WindowEnd + TimeSpan.FromTicks(gap.Ticks * (maxHops - 1));
+        var edges = ctx.Data.GetNetworkEdges(ctx.WindowStart.Date, horizon.Date.AddDays(1))
+            .Where(e => e.TimestampUtc > ctx.WindowStart && e.TimestampUtc <= horizon && e.BaseAmount is > 0 && e.SenderCustomerId is not null &&
+                        e.ReceiverCustomerId is not null && e.SenderCustomerId != e.ReceiverCustomerId)
+            .OrderBy(e => e.TimestampUtc).ToList();
+        var bySender = edges.GroupBy(e => e.SenderCustomerId!.Value).ToDictionary(g => g.Key, g => g.ToList());
+        var byReceiver = edges.GroupBy(e => e.ReceiverCustomerId!.Value).ToDictionary(g => g.Key, g => g.ToList());
+        var budget = 20000;
+        List<RuleTxn> Forward(RuleTxn from, HashSet<long> visited, int left)
+        {
+            var best = new List<RuleTxn>();
+            if (left <= 0 || --budget < 0 || !bySender.TryGetValue(from.ReceiverCustomerId!.Value, out var outs)) return best;
+            foreach (var e in outs)
+            {
+                if (e.TimestampUtc < from.TimestampUtc || e.TimestampUtc - from.TimestampUtc > gap || e.Id == from.Id) continue;
+                if (e.BaseAmount < from.BaseAmount * minPct || visited.Contains(e.ReceiverCustomerId!.Value)) continue;
+                visited.Add(e.ReceiverCustomerId.Value);
+                var rest = Forward(e, visited, left - 1);
+                visited.Remove(e.ReceiverCustomerId.Value);
+                if (rest.Count + 1 > best.Count) best = rest.Prepend(e).ToList();
+                if (best.Count >= left) break;
+            }
+            return best;
+        }
+        List<RuleTxn> Backward(RuleTxn to, HashSet<long> visited, int left)
+        {
+            var best = new List<RuleTxn>();
+            if (left <= 0 || --budget < 0 || !byReceiver.TryGetValue(to.SenderCustomerId!.Value, out var ins)) return best;
+            foreach (var e in ins)
+            {
+                if (e.TimestampUtc > to.TimestampUtc || to.TimestampUtc - e.TimestampUtc > gap || e.Id == to.Id) continue;
+                if (to.BaseAmount < e.BaseAmount * minPct || visited.Contains(e.SenderCustomerId!.Value)) continue;
+                visited.Add(e.SenderCustomerId.Value);
+                var rest = Backward(e, visited, left - 1);
+                visited.Remove(e.SenderCustomerId.Value);
+                if (rest.Count + 1 > best.Count) best = rest.Append(e).ToList();
+                if (best.Count >= left) break;
+            }
+            return best;
+        }
+        List<RuleTxn>? result = null;
+        foreach (var e in edges.Where(e => e.TimestampUtc <= ctx.WindowEnd && (subjects.Contains(e.SenderCustomerId!.Value) || subjects.Contains(e.ReceiverCustomerId!.Value))))
+        {
+            var visited = new HashSet<long> { e.SenderCustomerId!.Value, e.ReceiverCustomerId!.Value };
+            var back = Backward(e, visited, maxHops - 1);
+            foreach (var b in back) visited.Add(b.SenderCustomerId!.Value);
+            var fwd = Forward(e, visited, maxHops - 1 - back.Count);
+            var path = back.AsEnumerable().Reverse().Append(e).Concat(fwd).ToList();
+            if (result is null || path.Count > result.Count) result = path;
+            if (result.Count >= maxHops || budget < 0) break;
+        }
+        return result;
+    }
+
+    private readonly Dictionary<(ConditionNode Node, string Signature, DateTime From, DateTime To), Dictionary<long, decimal>> _peerCache = new();
+
+    /// <summary>
+    /// Period activity (filtered amount or count) of the subject and of its peer group defined by peerBy, over the calendar period
+    /// containing the trigger. Null when the subject has no peer group or fewer than minPeers peers (recorded as missing input).
+    /// </summary>
+    private (decimal Subject, List<decimal> Peers)? PeerValues(ConditionNode n, EvalContext ctx, RuleMatch match, string label)
+    {
+        if (ctx.Subject.CustomerId is not { } cid) return null;
+        var group = ctx.Data.GetPeerGroup(cid, n.PeerBy!);
+        if (group is not { } g) { ctx.Result?.MissingInputs.Add("peerGroup"); return null; }
+        var key = (n, g.Signature, ctx.WindowStart, ctx.BucketEnd);
+        if (!_peerCache.TryGetValue(key, out var vals))
+        {
+            vals = g.Members.Distinct().ToDictionary(m => m, _ => 0m);
+            var peerCtx = new Dictionary<long, EvalContext>();
+            foreach (var (c, t) in ctx.Data.GetCustomerTransactions(vals.Keys.ToList(), ctx.WindowStart, ctx.BucketEnd))
+            {
+                if (!vals.ContainsKey(c) || !IsEligible(ctx.Def, t) || t.TimestampUtc >= ctx.BucketEnd) continue;
+                if (n.Direction is "in" or "out" && t.Direction != n.Direction) continue;
+                if (!peerCtx.TryGetValue(c, out var pc))
+                    peerCtx[c] = pc = new EvalContext(ctx.Def, new RuleSubjectData { SubjectKey = $"customer:{c}", CustomerId = c }, t, -1, ctx.AllEligible, 0, 0,
+                        ctx.WindowStart, ctx.BucketEnd, ctx.Data, ctx.Tz, ctx.Cache);
+                if (!FilterMatches(n.Filter, t, pc)) continue;
+                vals[c] += n.Measure == "count" ? 1 : EffectiveBase(ctx.Def, t) ?? 0;
+            }
+            _peerCache[key] = vals;
+        }
+        var subject = vals.GetValueOrDefault(cid);
+        var peers = vals.Where(kv => kv.Key != cid).Select(kv => kv.Value).ToList();
+        var minPeers = n.MinPeers ?? 10;
+        match.Evidence[$"{label}.peerBy"] = n.PeerBy;
+        match.Evidence[$"{label}.peerGroup"] = g.Signature;
+        match.Evidence[$"{label}.peerCount"] = peers.Count;
+        match.Evidence[$"{label}.subjectValue"] = subject;
+        match.Evidence[$"{label}.period"] = $"{ctx.WindowStart:O}..{ctx.BucketEnd:O}";
+        if (peers.Count < minPeers)
+        {
+            match.Evidence[$"{label}.insufficientPeers"] = $"{peers.Count} < {minPeers}";
+            ctx.Result?.MissingInputs.Add($"peerGroup (fewer than {minPeers} peers)");
+            return null;
+        }
+        match.Evidence[$"{label}.peerMedian"] = Median(peers);
+        var sorted = peers.OrderBy(x => x).ToList();
+        match.Evidence[$"{label}.peerP90"] = sorted[(int)Math.Min(sorted.Count - 1, Math.Floor(sorted.Count * 0.9))];
+        return (subject, peers);
     }
 
     private static List<RuleTxn>? FindCycle(EvalContext ctx, int maxDepth)

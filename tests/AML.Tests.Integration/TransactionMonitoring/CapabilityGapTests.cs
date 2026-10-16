@@ -19,9 +19,6 @@ public class CapabilityGapTests : TmBase
     public static IEnumerable<object[]> Gaps() => new (string Sc, string Reason, object Attempt)[]
     {
         ("VEL-07", "No aggregate for regularity of time gaps (standard deviation of inter-transaction intervals).", W(Agg("intervalStdDev", "lte", 5))),
-        ("AMT-06", "peerRatio compares with the peer median of agent-processed volume only; no percentile, segment or minimum peer-group size.", W(new { aggregate = "peerPercentile", peerGroup = "typeSegmentRegion", @operator = "gte", value = 99 })),
-        ("RMV-02", "Wallet balances / end-of-day balances are not ingested or available to rules.", W(And(F_("wallet.endOfDayBalance", "lte", 10), Sum(null, "gte", 5000)))),
-        ("RMV-04", "cycle detects funds returning to the subject only; no open multi-hop chain (A→B→C→D) with per-hop retention.", W(new { aggregate = "chain", maxDepth = 3, @operator = "gte", value = 1 })),
         ("GEO-01", "No geolocation or distance/speed (impossible travel) computation; transactions carry country only.", W(Agg("travelSpeedKmh", "gt", 900))),
         ("GEO-07", "No 'first cross-border after M months domestic-only' aggregate (newCountries ignores amount and months of domestic history).", W(Agg("firstCrossBorderAfterMonths", "gte", 6))),
         ("GEO-08", "Agent locations / distances are not modelled; cash-in and cash-out by different persons cannot be correlated.", W(Agg("agentDistanceKm", "gte", 100))),
@@ -39,11 +36,8 @@ public class CapabilityGapTests : TmBase
         ("MER-05", "POS geolocation and merchant registered area are not modelled.", W(Agg("posDistanceKm", "gt", 20))),
         ("REV-02", "Refund destination instrument vs original payment instrument is not captured.", W(F_("txn.refundInstrumentMismatch", "eq", true))),
         ("REV-03", "No sequence pattern of failed attempts with decreasing amounts followed by a success.", W(Agg("failedDecreasingThenSuccess", "gte", 3))),
-        ("REV-05", "Invoice amounts and refund-to-third-party linkage are not captured.", W(F_("txn.invoiceAmount", "lt", 0))),
+        ("REV-05", "Invoice amounts are captured (txn.invoiceAmount), but a refund cannot be linked to the third party that receives it, so refunds to third parties cannot be compared with the invoice.", W(F_("txn.refundToThirdParty", "eq", true))),
         ("XBR-03", "No corridor share per peer group (nationality/segment).", W(Agg("corridorPeerShare", "lt", 1))),
-        ("TF-04", "Balances are not available (withdrawal of ≥ P% of balance) and dormancy cannot be combined with a cross-border step sequence.", W(F_("wallet.balanceWithdrawnPct", "gte", 90))),
-        ("ATO-01", "Password-reset events can be ingested as signals, but wallet balances are not, so 'outgoing ≥ P% of balance' cannot be evaluated.", W(F_("event.passwordResetHoursAgo", "lte", 6))),
-        ("ATO-02", "Beneficiary-added events can be ingested as signals, but wallet balances are not, so 'transfer ≥ P% of balance' cannot be evaluated.", W(F_("event.beneficiaryAddedMinutesAgo", "lte", 30))),
     }.Select(g => new object[] { g.Sc, g.Reason, g.Attempt });
 
     [Theory]

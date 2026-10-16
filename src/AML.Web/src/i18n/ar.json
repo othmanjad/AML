@@ -508,7 +508,19 @@
   "windowStart": "بداية النافذة",
   "windowStartLocal": "بداية النافذة (محلي)",
   "windowStartUtc": "بداية النافذة (UTC)",
-  "windowType": "نوع النافذة"
+  "windowType": "نوع النافذة",
+  "customerName": "العميل",
+  "transactionCount": "عدد العمليات",
+  "totalBaseAmount": "الإجمالي (العملة الأساسية)",
+  "cashInBaseAmount": "إيداع نقدي",
+  "cashOutBaseAmount": "سحب نقدي",
+  "threshold": "الحد",
+  "submissionReference": "مرجع الإرسال",
+  "exportedAt": "تاريخ التصدير",
+  "metric": "المؤشر",
+  "segmentField": "حقل الشريحة",
+  "segmentValue": "قيمة الشريحة",
+  "householdId": "رقم الأسرة"
  },
  "v": {
   "Low": "منخفض",
@@ -704,7 +716,10 @@
   "MerchantPayment": "دفع للتاجر",
   "CashIn": "إيداع نقدي",
   "CashOut": "سحب نقدي",
-  "Mobile": "الهاتف المحمول"
+  "Mobile": "الهاتف المحمول",
+  "Exported": "مُصدَّر",
+  "Household": "الأسرة",
+  "Wallet": "المحفظة"
  },
  "app": {
   "title": "منصة الامتثال لمكافحة غسل الأموال"
@@ -916,7 +931,9 @@
   "transactions": "المعاملات",
   "users": "المستخدمون والأدوار والصلاحيات",
   "walletMappings": "تعيين المحافظ",
-  "watchlists": "قوائم المراقبة"
+  "watchlists": "قوائم المراقبة",
+  "ctrReports": "تقارير العمليات النقدية",
+  "benchmarks": "المعايير القطاعية"
  },
  "ops": {
   "correctedPayload": "الحمولة المصحّحة (JSON، اختياري)",
@@ -948,7 +965,10 @@
   "between": "بين",
   "in": "ضمن القائمة",
   "notIn": "ليس ضمن القائمة",
-  "contains": "يحتوي"
+  "contains": "يحتوي",
+  "multipleOf": "من مضاعفات",
+  "inList": "ضمن قائمة مُدارة",
+  "notInList": "ليس ضمن قائمة مُدارة"
  },
  "profile": {
   "acceptance": "قرارات القبول",
@@ -1084,7 +1104,13 @@
   "measures": {
    "count": "العدد",
    "amount": "المبلغ"
-  }
+  },
+  "valueBy": "الحد حسب خاصية",
+  "valueByValues": "الحدود (القيمة=الحد)",
+  "minHopPct": "أدنى نسبة لكل قفزة",
+  "peerBy": "مجموعة النظراء حسب",
+  "minPeers": "أدنى عدد للنظراء",
+  "benchmark": "مؤشر المعيار"
  },
  "screening": {
   "confirmTransition": "قرارات الفحص مُدققة وقد ترتب التزامات تجميد. أكد الحالة الجديدة.",
@@ -1194,5 +1220,14 @@
   "mi-pack": "حزمة المعلومات الإدارية",
   "institutional-risk": "مستخرج تقييم المخاطر المؤسسية",
   "analyst-quality": "جودة المحللين"
+ },
+ "ctr": {
+  "generate": "إنشاء ليوم عمل",
+  "generated": "أُنشئ {{created}} وحُدّث {{updated}} (الحد {{threshold}})",
+  "notice": "إجمالي النقد اليومي لكل عميل إذا بلغ حد تقرير العمليات النقدية أو تجاوزه (قيمة تنظيمية بانتظار تأكيد فريق الامتثال). يعتمد مسؤول الإبلاغ التقرير ثم يُصدَّر ويُرسَل يدوياً؛ لا يُرسَل أي شيء إلى وحدة التحريات تلقائياً.",
+  "recordSubmission": "تسجيل الإرسال اليدوي"
+ },
+ "benchmarks": {
+  "notice": "قيم معيارية لكل شريحة عملاء تستخدمها قاعدة benchmarkDeviation. يجب ذكر مصدر كل قيمة، والقيم أمثلة حتى يؤكدها فريق الامتثال."
  }
 }

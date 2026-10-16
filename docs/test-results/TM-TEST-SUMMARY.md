@@ -1,12 +1,12 @@
 # Transaction Monitoring Scenarios — Test Execution Summary
 
-Workbook: `AML_Transaction_Monitoring_Test_Cases.xlsx` (120 scenarios, 314 test cases). Executed 2026-10-15 by the automated suite `tests/AML.Tests.Integration/TransactionMonitoring` against SQL Server 2022 (each scenario configured as a rule through the public API, data ingested through the integration API, rules executed and alerts inspected).
+Workbook: `AML_Transaction_Monitoring_Test_Cases.xlsx` (120 scenarios, 314 test cases). Executed 2026-10-16 by the automated suite `tests/AML.Tests.Integration/TransactionMonitoring` against SQL Server 2022 (each scenario configured as a rule through the public API, data ingested through the integration API, rules executed and alerts inspected).
 
 | Status | Count |
 |---|---|
-| Pass | 252 |
+| Pass | 268 |
 | Fail | 0 |
-| Blocked | 62 |
+| Blocked | 46 |
 | Not Run | 0 |
 | **Total** | **314** |
 
@@ -15,9 +15,9 @@ Workbook: `AML_Transaction_Monitoring_Test_Cases.xlsx` (120 scenarios, 314 test 
 | Category | Pass | Fail | Blocked | Not Run |
 |---|---|---|---|---|
 | Velocity & Frequency | 30 | 0 | 4 | 0 |
-| Amount & Thresholds | 28 | 0 | 3 | 0 |
+| Amount & Thresholds | 31 | 0 | 0 | 0 |
 | Structuring & Smurfing | 22 | 0 | 0 | 0 |
-| Rapid Movement & Pass-through | 10 | 0 | 7 | 0 |
+| Rapid Movement & Pass-through | 17 | 0 | 0 | 0 |
 | Fan-in / Fan-out | 14 | 0 | 0 | 0 |
 | Geographic & Impossible Travel | 15 | 0 | 11 | 0 |
 | Device, IP & Channel | 10 | 0 | 6 | 0 |
@@ -30,9 +30,9 @@ Workbook: `AML_Transaction_Monitoring_Test_Cases.xlsx` (120 scenarios, 314 test 
 | Money Mule | 8 | 0 | 0 | 0 |
 | Cross-border Remittance | 9 | 0 | 2 | 0 |
 | Top-ups, Vouchers & Bill Payments | 8 | 0 | 0 | 0 |
-| Terrorist Financing Indicators | 6 | 0 | 2 | 0 |
+| Terrorist Financing Indicators | 8 | 0 | 0 | 0 |
 | Sanctions & High-risk Counterparties | 10 | 0 | 0 | 0 |
-| Account Takeover Overlap (FRAML) | 2 | 0 | 4 | 0 |
+| Account Takeover Overlap (FRAML) | 6 | 0 | 0 | 0 |
 | Virtual Assets & Gambling | 6 | 0 | 0 | 0 |
 | Engine Edge Cases (applies to all scenarios) | 23 | 0 | 1 | 0 |
 
@@ -68,9 +68,6 @@ Workbook: `AML_Transaction_Monitoring_Test_Cases.xlsx` (120 scenarios, 314 test 
 | AGT-02 | peerRatio uses agent volume, not the cash-out/cash-in ratio compared with a regional peer median × R. |
 | AGT-04 | No 'customers registered by agent who transact within 24 h' share aggregate. |
 | AGT-06 | Agent location / customer residence distance is not modelled. |
-| AMT-06 | peerRatio compares with the peer median of agent-processed volume only; no percentile, segment or minimum peer-group size. |
-| ATO-01 | Password-reset events can be ingested as signals, but wallet balances are not, so 'outgoing ≥ P% of balance' cannot be evaluated. |
-| ATO-02 | Beneficiary-added events can be ingested as signals, but wallet balances are not, so 'transfer ≥ P% of balance' cannot be evaluated. |
 | BEH-07 | No salary-credit linkage or 'M consecutive months' pattern. |
 | DEV-03 | IP anonymiser (VPN/proxy/TOR) classification is not captured or exposed to rules. |
 | DEV-04 | Rooted/jailbroken/emulator device flags are not captured or exposed to rules. |
@@ -84,10 +81,7 @@ Workbook: `AML_Transaction_Monitoring_Test_Cases.xlsx` (120 scenarios, 314 test 
 | MER-05 | POS geolocation and merchant registered area are not modelled. |
 | REV-02 | Refund destination instrument vs original payment instrument is not captured. |
 | REV-03 | No sequence pattern of failed attempts with decreasing amounts followed by a success. |
-| REV-05 | Invoice amounts and refund-to-third-party linkage are not captured. |
-| RMV-02 | Wallet balances / end-of-day balances are not ingested or available to rules. |
-| RMV-04 | cycle detects funds returning to the subject only; no open multi-hop chain (A→B→C→D) with per-hop retention. |
-| TF-04 | Balances are not available (withdrawal of ≥ P% of balance) and dormancy cannot be combined with a cross-border step sequence. |
+| REV-05 | Invoice amounts are captured (txn.invoiceAmount), but a refund cannot be linked to the third party that receives it, so refunds to third parties cannot be compared with the invoice. |
 | VEL-07 | No aggregate for regularity of time gaps (standard deviation of inter-transaction intervals). |
 | XBR-03 | No corridor share per peer group (nationality/segment). |
 | TM-ENG-12-01 | 2 million transactions/day with all active rules requires a production-sized SQL Server and data generator; not executable in this test container. The engine loads all transactions of the window into memory (no pre-aggregated batch path), so the target is not demonstrated. |
@@ -95,6 +89,10 @@ Workbook: `AML_Transaction_Monitoring_Test_Cases.xlsx` (120 scenarios, 314 test 
 ## Scenarios made executable by the rule DSL extension (Blocked in the first execution)
 
 AMT-05, AMT-07, ATO-03, BEH-02, BEH-05, BEH-08, CIR-02, CIR-03, CSH-03, DEV-02, DEV-05, DEV-06, FAN-03, FAN-05, GEO-02, GEO-06, MUL-02, MUL-03, MUL-04, STR-06, VAG-01, VAG-02, VAG-03, VEL-06, VEL-08
+
+## Scenarios made executable by end-of-day balances, multi-hop chains and peer percentiles (second extension)
+
+AMT-06, ATO-01, ATO-02, RMV-02, RMV-04, TF-04
 
 ## Method notes
 

@@ -89,6 +89,7 @@ function FieldCondition({ node, onChange, onRemove, meta, path, readOnly }: EdPr
         />
       </Labeled>
       <ValueInput id={`${path}-v`} label={t('rule.value')} value={node.value} type={ft} op={node.operator} onChange={(v) => onChange({ ...node, value: v })} readOnly={readOnly} />
+      {ft === 'Number' && ['eq', 'neq', 'gt', 'gte', 'lt', 'lte'].includes(node.operator) && <ValueByEditor node={node} onChange={onChange} meta={meta} path={path} readOnly={readOnly} />}
       {onRemove && !readOnly && <Button icon={<DeleteOutlined />} aria-label={t('actions.remove')} onClick={onRemove} />}
     </div>
   );
@@ -98,12 +99,68 @@ const AGG_EXTRA: Record<string, string[]> = {
   ratio: ['measure', 'numerator', 'denominator'],
   rapidMovement: ['maxMinutes'],
   profileRatio: ['profileField', 'measure'],
-  peerRatio: ['peerGroup', 'measure'],
+  peerRatio: ['peerGroup', 'peerBy', 'minPeers', 'measure'],
+  peerPercentile: ['peerBy', 'minPeers', 'measure'],
+  benchmarkDeviation: ['benchmark', 'measure', 'numerator', 'denominator'],
+  chain: ['maxDepth', 'maxMinutes', 'minHopPct'],
   cycle: ['maxDepth'],
   distinctCount: ['of'],
   consecutiveDays: ['dailyRange'],
   minutesSinceEvent: ['event'],
 };
+
+const PEER_ATTRS = ['customer.type', 'customer.region', 'customer.residence', 'customer.nationality', 'customer.riskLevel'];
+
+/** Optional threshold chosen by a text attribute (valueBy): "High=3000, Critical=1000"; the condition's value is the default. */
+function ValueByEditor({ node, onChange, meta, path, readOnly }: EdProps) {
+  const { t } = useTranslation();
+  const toText = (vb?: Node) => (vb?.values ? Object.entries(vb.values).map(([k, v]) => `${k}=${v}`).join(', ') : '');
+  const [text, setText] = useState(toText(node.valueBy));
+  useEffect(() => setText(toText(node.valueBy)), [JSON.stringify(node.valueBy)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const textFields = [...meta.fields, ...meta.dynamicFields].filter((f) => f.type === 'Text').map((f) => ({ value: f.code, label: f.code }));
+  const parse = (s: string) =>
+    Object.fromEntries(
+      s
+        .split(',')
+        .map((p) => p.split('='))
+        .filter((kv) => kv.length === 2 && kv[0].trim() !== '' && !isNaN(Number(kv[1])))
+        .map(([k, v]) => [k.trim(), Number(v)]),
+    );
+  return (
+    <>
+      <Labeled id={`${path}-vbf`} label={t('rule.valueBy')}>
+        <Select
+          id={`${path}-vbf`}
+          data-testid={`${path}-valueBy`}
+          disabled={readOnly}
+          allowClear
+          showSearch
+          style={{ width: 210 }}
+          value={node.valueBy?.field}
+          options={textFields}
+          onChange={(f) => onChange({ ...node, valueBy: f ? { field: f, values: node.valueBy?.values ?? {} } : undefined })}
+        />
+      </Labeled>
+      {node.valueBy && (
+        <Labeled id={`${path}-vbv`} label={t('rule.valueByValues')}>
+          <Input
+            id={`${path}-vbv`}
+            data-testid={`${path}-valueBy-values`}
+            disabled={readOnly}
+            dir="ltr"
+            style={{ width: 220 }}
+            placeholder="High=3000, Critical=1000"
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              onChange({ ...node, valueBy: { ...node.valueBy, values: parse(e.target.value) } });
+            }}
+          />
+        </Labeled>
+      )}
+    </>
+  );
+}
 
 const DISTINCT_OF = ['channel', 'device', 'sourceCountry', 'destinationCountry', 'country', 'type', 'counterparty'];
 const SIGNAL_EVENTS = ['NewDevice', 'NewLoginCountry', 'Registration', 'Login', 'SimChange', 'PhoneChange', 'EmailChange', 'AddressChange', 'PasswordReset', 'BeneficiaryAdded', 'DeviceChangeApproved'];
@@ -148,6 +205,36 @@ function AggregateCondition({ node, onChange, onRemove, meta, path, readOnly }: 
             <InputNumber id={`${path}-mm`} disabled={readOnly} value={node.maxMinutes} onChange={(v) => onChange({ ...node, maxMinutes: v ?? undefined })} />
           </Labeled>
         )}
+        {extra.includes('minHopPct') && (
+          <Labeled id={`${path}-mhp`} label={t('rule.minHopPct')}>
+            <InputNumber id={`${path}-mhp`} disabled={readOnly} min={1} max={100} value={node.minHopPct} onChange={(v) => onChange({ ...node, minHopPct: v ?? undefined })} />
+          </Labeled>
+        )}
+        {extra.includes('peerBy') && (
+          <Labeled id={`${path}-pb`} label={t('rule.peerBy')}>
+            <Select
+              id={`${path}-pb`}
+              data-testid={`${path}-peerBy`}
+              mode="multiple"
+              disabled={readOnly}
+              style={{ minWidth: 240 }}
+              value={node.peerBy ?? []}
+              options={[...PEER_ATTRS, ...meta.dynamicFields.map((f) => f.code)].map((v) => ({ value: v, label: v }))}
+              onChange={(v: string[]) => onChange({ ...node, peerBy: v.length ? v : undefined })}
+            />
+          </Labeled>
+        )}
+        {extra.includes('minPeers') && (
+          <Labeled id={`${path}-mp`} label={t('rule.minPeers')}>
+            <InputNumber id={`${path}-mp`} disabled={readOnly} min={1} value={node.minPeers} onChange={(v) => onChange({ ...node, minPeers: v ?? undefined })} />
+          </Labeled>
+        )}
+        {extra.includes('benchmark') && (
+          <Labeled id={`${path}-bm`} label={t('rule.benchmark')}>
+            <Input id={`${path}-bm`} data-testid={`${path}-benchmark`} disabled={readOnly} dir="ltr" style={{ width: 170 }} value={node.benchmark} onChange={(e) => onChange({ ...node, benchmark: e.target.value.toUpperCase() })} />
+          </Labeled>
+        )}
+        {['eq', 'neq', 'gt', 'gte', 'lt', 'lte'].includes(node.operator) && <ValueByEditor node={node} onChange={onChange} meta={meta} path={path} readOnly={readOnly} />}
         {extra.includes('maxDepth') && (
           <Labeled id={`${path}-md`} label={t('rule.maxDepth')}>
             <InputNumber id={`${path}-md`} disabled={readOnly} value={node.maxDepth} onChange={(v) => onChange({ ...node, maxDepth: v ?? undefined })} />

@@ -24,6 +24,8 @@ public class Customer : TenantEntity, IConcurrencyAware
     public string? AssignedOfficer { get; set; }
     public string? Region { get; set; }
     public long? OnboardingAgentId { get; set; }
+    /// <summary>Household (shared residence / family unit) identifier from the core system; rules can aggregate by household.</summary>
+    public string? HouseholdId { get; set; }
     public string? DueDiligenceLevel { get; set; }
     public bool IsPep { get; set; }
     public bool IsFrozen { get; set; }

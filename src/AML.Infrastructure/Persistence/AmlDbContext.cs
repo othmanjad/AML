@@ -86,6 +86,7 @@ public sealed class AmlDbContext : DbContext, IAmlDbContext
             S(e.Property(x => x.KycStatus), 30); S(e.Property(x => x.ScreeningStatus), 30); S(e.Property(x => x.AssignedOfficer), 100); S(e.Property(x => x.NameSearchKey), 1000);
             e.HasIndex(x => new { x.TenantId, x.SourceSystem, x.ExternalId }).IsUnique();
             e.HasIndex(x => new { x.TenantId, x.Status }); e.HasIndex(x => x.Region); e.HasIndex(x => x.OnboardingAgentId); e.HasIndex(x => x.ScreeningStatus);
+            S(e.Property(x => x.HouseholdId), 100); e.HasIndex(x => new { x.TenantId, x.HouseholdId });
         });
         Child<CustomerIdentification>(m, x => x.CustomerId, e => { S(e.Property(x => x.IdNumberToken), 128); e.HasIndex(x => x.IdNumberToken); });
         Child<CustomerContact>(m, x => x.CustomerId, e => { S(e.Property(x => x.SearchToken), 128); e.HasIndex(x => x.SearchToken); });
@@ -132,6 +133,7 @@ public sealed class AmlDbContext : DbContext, IAmlDbContext
             S(e.Property(x => x.OriginalSourceTransactionId), 100); S(e.Property(x => x.Currency), 3); S(e.Property(x => x.BaseCurrency), 3); S(e.Property(x => x.Status), 30);
             S(e.Property(x => x.TransactionType), 50); S(e.Property(x => x.Channel), 50); S(e.Property(x => x.DeviceId), 200); S(e.Property(x => x.SenderWalletExternalId), 100);
             S(e.Property(x => x.ReceiverWalletExternalId), 100); S(e.Property(x => x.SourceCountry), 2); S(e.Property(x => x.DestinationCountry), 2);
+            S(e.Property(x => x.InvoiceNumber), 100); S(e.Property(x => x.InvoiceCurrency), 3); S(e.Property(x => x.GoodsCategory), 100);
             e.Property(x => x.FxRate).HasPrecision(19, 8);
             e.Ignore(x => x.NetAmount);
             e.HasIndex(x => new { x.TenantId, x.SourceSystem, x.SourceTransactionId }).IsUnique();
@@ -147,6 +149,12 @@ public sealed class AmlDbContext : DbContext, IAmlDbContext
         m.Entity<TransactionStatusHistory>(e => { e.HasIndex(x => x.TransactionId); e.HasOne<Transaction>().WithMany().HasForeignKey(x => x.TransactionId).OnDelete(DeleteBehavior.Restrict); });
         m.Entity<TransactionPartyResolution>(e => { e.HasIndex(x => x.TransactionId); e.HasOne<Transaction>().WithMany().HasForeignKey(x => x.TransactionId).OnDelete(DeleteBehavior.Restrict); });
         m.Entity<RawTransactionPayload>(e => e.HasIndex(x => x.IngestionRecordId));
+        m.Entity<WalletBalanceSnapshot>(e =>
+        {
+            S(e.Property(x => x.SourceSystem), 50); S(e.Property(x => x.ExternalWalletId), 100); S(e.Property(x => x.Currency), 3);
+            e.HasIndex(x => new { x.TenantId, x.SourceSystem, x.ExternalWalletId, x.BusinessDate }).IsUnique();
+            e.HasIndex(x => new { x.CustomerId, x.BusinessDate });
+        });
         m.Entity<CustomerDailyAggregate>(e => { S(e.Property(x => x.Direction), 3); e.HasIndex(x => new { x.CustomerId, x.BusinessDate, x.Direction }).IsUnique(); });
 
         // ---------- risk ----------
@@ -258,6 +266,17 @@ public sealed class AmlDbContext : DbContext, IAmlDbContext
             e.ToTable("RegulatoryReports", t => t.HasTrigger("TR_RegulatoryReports_SubmittedImmutable"));
             S(e.Property(x => x.ReportNumber), 100); e.HasIndex(x => x.ReportNumber).IsUnique(); e.HasIndex(x => x.CaseId);
             e.HasOne<AmlCase>().WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.Restrict);
+        });
+        m.Entity<CurrencyTransactionReport>(e =>
+        {
+            S(e.Property(x => x.ReportNumber), 100); S(e.Property(x => x.Status), 30); S(e.Property(x => x.BaseCurrency), 3);
+            e.HasIndex(x => x.ReportNumber).IsUnique(); e.HasIndex(x => new { x.TenantId, x.CustomerId, x.BusinessDate }).IsUnique(); e.HasIndex(x => x.Status);
+            e.HasOne<Customer>().WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        });
+        m.Entity<IndustryBenchmark>(e =>
+        {
+            S(e.Property(x => x.Metric), 50); S(e.Property(x => x.SegmentField), 100); S(e.Property(x => x.SegmentValue), 200);
+            e.HasIndex(x => new { x.TenantId, x.Metric, x.SegmentField, x.SegmentValue, x.EffectiveFrom });
         });
         m.Entity<AuthorityRequest>(e => e.HasIndex(x => x.CustomerId));
         m.Entity<RetentionRun>(e => { });

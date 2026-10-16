@@ -23,6 +23,8 @@ import ScreeningPage from './pages/screening/Screening';
 import WatchlistsPage from './pages/screening/Watchlists';
 import { RegulatoryReportDetail, RegulatoryReportsList } from './pages/reporting/RegulatoryReports';
 import AuthorityRequests from './pages/reporting/AuthorityRequests';
+import CtrReportsPage from './pages/reporting/CtrReports';
+import BenchmarksPage from './pages/admin/Benchmarks';
 import ActionsPage from './pages/ActionsPage';
 import EffectivenessPage from './pages/EffectivenessPage';
 import ReportsPage from './pages/ReportsPage';
@@ -85,6 +87,8 @@ const routes: Array<{ path: string; perm?: string | string[]; el: ReactNode }> =
   { path: '/regulatory-reports', perm: 'str.prepare', el: <RegulatoryReportsList /> },
   { path: '/regulatory-reports/:id', perm: 'str.prepare', el: <RegulatoryReportDetail /> },
   { path: '/authority-requests', perm: 'authority.manage', el: <AuthorityRequests /> },
+  { path: '/ctr-reports', perm: 'str.prepare', el: <CtrReportsPage /> },
+  { path: '/admin/benchmarks', perm: 'rules.read', el: <BenchmarksPage /> },
   { path: '/actions', perm: ['actions.read', 'holds.work'], el: <ActionsPage /> },
   { path: '/effectiveness', perm: ['effectiveness.read', 'qa.review'], el: <EffectivenessPage /> },
   { path: '/reports', perm: 'reports.read', el: <ReportsPage /> },

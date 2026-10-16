@@ -100,6 +100,7 @@ public sealed class CustomerCreateRequest
     public string? AssignedOfficer { get; set; }
     public string? Region { get; set; }
     public long? OnboardingAgentId { get; set; }
+    public string? HouseholdId { get; set; }
     public bool IsPep { get; set; }
     public Dictionary<string, JsonElement>? Attributes { get; set; }
     public List<IdentificationInput>? Identifications { get; set; }
@@ -117,6 +118,7 @@ public sealed class CustomerUpdateRequest
     public string? IncorporationCountry { get; set; }
     public string? AssignedOfficer { get; set; }
     public string? Region { get; set; }
+    public string? HouseholdId { get; set; }
     public bool? IsPep { get; set; }
     public string? Reason { get; set; }
     public string RowVersion { get; set; } = "";
@@ -134,7 +136,7 @@ public sealed record CustomerDetailDto(long Id, string SourceSystem, string Exte
     DateOnly? DateOfBirth, string? NationalityCountry, string? ResidenceCountry, string? IncorporationCountry, DateOnly? RegistrationDate, string KycStatus,
     string ScreeningStatus, string? AssignedOfficer, string? Region, string? DueDiligenceLevel, bool IsPep, bool IsFrozen, DateTime? ExitedAt, bool IsTestData,
     DateTime CreatedAt, DateTime UpdatedAt, string RowVersion, IReadOnlyList<IdentificationDto> Identifications, IReadOnlyList<ContactDto> Contacts,
-    RiskSummaryDto? Risk, string? AcceptanceDecision, int AlertCount, int CaseCount, IReadOnlyList<string> KycGaps, IReadOnlyList<string> Flags);
+    RiskSummaryDto? Risk, string? AcceptanceDecision, int AlertCount, int CaseCount, IReadOnlyList<string> KycGaps, IReadOnlyList<string> Flags, string? HouseholdId = null);
 
 public sealed record AttributeValueDto(string Code, int FieldVersion, string LabelEn, string LabelAr, string GroupCode, string DataType, bool IsSensitive,
     object? Value, string Display, bool Masked, DateTime EffectiveFrom, DateTime? EffectiveTo, string Source, string VerificationStatus);

@@ -78,3 +78,44 @@ public class AuthorityRequest : TenantEntity, IConcurrencyAware
     public string? CreatedBy { get; set; }
     public byte[] RowVersion { get; set; } = Array.Empty<byte>();
 }
+
+public static class CtrStatuses
+{
+    public const string Draft = "Draft";
+    public const string Approved = "Approved";
+    public const string Exported = "Exported";
+    /// <summary>Submitted manually to the FIU outside the system (reference recorded); never sent automatically.</summary>
+    public const string Submitted = "Submitted";
+    public const string Rejected = "Rejected";
+}
+
+/// <summary>
+/// Currency (cash) transaction report: one per customer and business date whose eligible cash transactions total at least the
+/// configured threshold (Reporting:CtrThreshold, base currency). Generated as a draft, approved, exported and submitted manually.
+/// </summary>
+public class CurrencyTransactionReport : TenantEntity, IConcurrencyAware
+{
+    public string ReportNumber { get; set; } = "";
+    public long CustomerId { get; set; }
+    public DateOnly BusinessDate { get; set; }
+    public int TransactionCount { get; set; }
+    public decimal TotalBaseAmount { get; set; }
+    public decimal CashInBaseAmount { get; set; }
+    public decimal CashOutBaseAmount { get; set; }
+    public string BaseCurrency { get; set; } = "";
+    public decimal Threshold { get; set; }
+    public string TransactionIdsJson { get; set; } = "[]";
+    public string Status { get; set; } = CtrStatuses.Draft;
+    public DateOnly DueDate { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string? CreatedBy { get; set; }
+    public string? ApprovedBy { get; set; }
+    public DateTime? ApprovedAt { get; set; }
+    public DateTime? ExportedAt { get; set; }
+    public string? SubmissionReference { get; set; }
+    public DateTime? SubmittedAt { get; set; }
+    public string? SubmittedBy { get; set; }
+    public string? Notes { get; set; }
+    public bool IsTestData { get; set; }
+    public byte[] RowVersion { get; set; } = Array.Empty<byte>();
+}
