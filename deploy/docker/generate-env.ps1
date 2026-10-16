@@ -49,4 +49,4 @@ SWAGGER_ENABLED=true
 # UTF-8 without BOM so docker compose reads the first variable correctly.
 [System.IO.File]::WriteAllText($target, $content, (New-Object System.Text.UTF8Encoding $false))
 Write-Host "Created $target"
-Write-Host "Test users' password (DEVAUTH_SEED_PASSWORD) and the other secrets are in that file — store it securely."
+Write-Host "Test users' password (DEVAUTH_SEED_PASSWORD) and the other secrets are in that file - store it securely."

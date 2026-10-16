@@ -1,4 +1,4 @@
-# AML Platform — test/staging deployment with Docker (Linux containers).
+# AML Platform - test/staging deployment with Docker (Linux containers).
 # 1. Copy deploy/docker/.env.example to .env (or run deploy/docker/generate-env.ps1) and fill every value.
 # 2. docker compose up -d --build
 # 3. Open http://<server>:<WEB_PORT>  (default 8080)
