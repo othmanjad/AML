@@ -324,3 +324,47 @@ public sealed class TransactionsController : AmlController
     [HttpPost("wallets"), HasPermission(Perm.CustomersWrite)]
     public Task<WalletDto> CreateWallet([FromBody] WalletInput i, [FromServices] WalletService w, CancellationToken ct) => w.CreateAsync(i, ct);
 }
+
+/// <summary>Lookup management: source-code translations, the unmapped queue and per-code risk scores.</summary>
+[Route("api/admin/lookup-management")]
+public sealed class LookupManagementController : AmlController
+{
+    private readonly AML.Application.Lookups.LookupManagementService _svc;
+    public LookupManagementController(AML.Application.Lookups.LookupManagementService svc) => _svc = svc;
+
+    [HttpGet("categories"), HasPermission(Perm.RiskRead)]
+    public Task<List<object>> Categories(CancellationToken ct) => _svc.CategoriesAsync(ct);
+
+    [HttpGet("mappings"), HasPermission(Perm.RiskRead)]
+    public Task<List<LookupCodeMapping>> Mappings(string? sourceSystem, string? category, string? search, CancellationToken ct) => _svc.MappingsAsync(sourceSystem, category, search, ct);
+
+    [HttpPost("mappings"), HasPermission(Perm.AdminLookups)]
+    public Task<object> CreateMapping([FromBody] AML.Application.Lookups.CodeMappingInput i, CancellationToken ct) => _svc.CreateMappingAsync(i, ct);
+
+    [HttpPut("mappings/{id:long}"), HasPermission(Perm.AdminLookups)]
+    public Task<object> UpdateMapping(long id, [FromBody] AML.Application.Lookups.CodeMappingInput i, CancellationToken ct) => _svc.UpdateMappingAsync(id, i, ct);
+
+    [HttpPost("mappings/import"), HasPermission(Perm.AdminLookups), RequestSizeLimit(5_000_000)]
+    public async Task<AML.Application.Lookups.ImportResult> Import(IFormFile file, CancellationToken ct)
+    {
+        await using var stream = file.OpenReadStream();
+        return await _svc.ImportAsync(stream, ct);
+    }
+
+    [HttpGet("unmapped"), HasPermission(Perm.RiskRead)]
+    public Task<List<object>> Unmapped(CancellationToken ct) => _svc.UnmappedAsync(ct);
+
+    [HttpGet("scores"), HasPermission(Perm.RiskRead)]
+    public Task<List<LookupRiskScore>> Scores(string? category, bool includeHistory, CancellationToken ct) => _svc.ScoresAsync(category, includeHistory, ct);
+
+    [HttpPost("scores"), HasPermission(Perm.RiskConfig)]
+    public Task<LookupRiskScore> ProposeScore([FromBody] AML.Application.Lookups.LookupScoreInput i, CancellationToken ct) => _svc.ProposeScoreAsync(i, ct);
+
+    public sealed record ScoreDecision(string? Comment);
+
+    [HttpPost("scores/{id:long}/approve"), HasPermission(Perm.RiskApprove)]
+    public Task<object> Approve(long id, [FromBody] ScoreDecision? r, CancellationToken ct) => _svc.DecideScoreAsync(id, true, r?.Comment, ct);
+
+    [HttpPost("scores/{id:long}/reject"), HasPermission(Perm.RiskApprove)]
+    public Task<object> Reject(long id, [FromBody] ScoreDecision r, CancellationToken ct) => _svc.DecideScoreAsync(id, false, r.Comment, ct);
+}

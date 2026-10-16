@@ -531,7 +531,16 @@
   "invoiceNumber": "Invoice number",
   "invoiceAmount": "Invoice amount",
   "invoiceCurrency": "Invoice currency",
-  "goodsCategory": "Goods category"
+  "goodsCategory": "Goods category",
+  "externalCode": "Source code",
+  "externalLabel": "Source label",
+  "amlCode": "AML code",
+  "search": "Search",
+  "customers": "Customers",
+  "firstSeen": "First seen",
+  "lastSeen": "Last seen",
+  "scoringMode": "Scoring mode",
+  "lookupCategory": "Lookup category"
  },
  "app": {
   "title": "AML Compliance Platform"
@@ -745,7 +754,8 @@
   "walletMappings": "Wallet Mapping",
   "watchlists": "Watchlists",
   "ctrReports": "Cash transaction reports",
-  "benchmarks": "Industry benchmarks"
+  "benchmarks": "Industry benchmarks",
+  "lookupManagement": "Lookup management & risk scores"
  },
  "ops": {
   "correctedPayload": "Corrected payload (JSON, optional)",
@@ -859,7 +869,8 @@
   "simInputsHelp": "Data-source code to value, e.g. customer.nationality",
   "simulate": "Simulate",
   "thresholds": "Risk thresholds",
-  "whyTitle": "Why this risk level?"
+  "whyTitle": "Why this risk level?",
+  "scoringModeHelp": "Mapping: scores defined on this factor. LookupScore: the score of the value's code in Lookup management (central, approved per code)."
  },
  "rule": {
   "addAggregate": "Add aggregate",
@@ -1041,5 +1052,20 @@
  },
  "benchmarks": {
   "notice": "Benchmark values per customer segment for the benchmarkDeviation rule aggregate. Each value must cite its source; values are examples until confirmed by compliance."
+ },
+ "lookups": {
+  "notice": "The wallet and core systems send their own codes. Mappings translate them to AML codes; codes without a mapping wait in the Unmapped tab and are applied (with re-assessment) as soon as a mapping is added. Each AML code has a risk score (0–100, approved by a second person) used by risk factors in LookupScore mode; the methodology thresholds turn the total into Low / Medium / High.",
+  "scores": "Codes & risk scores",
+  "mappings": "Code mappings",
+  "unmapped": "Unmapped codes",
+  "proposeScore": "Propose score",
+  "setScore": "Set score",
+  "noScore": "No score",
+  "pending": "Pending approval",
+  "remapped": "Mapping saved: {{applied}} waiting values applied, {{reassessed}} customers re-assessed",
+  "reassessed": "Approved: {{n}} customers re-assessed",
+  "imported": "Imported: {{created}} created, {{updated}} updated, {{rejected}} rejected",
+  "importCsv": "Import CSV",
+  "mapNow": "Map"
  }
 }

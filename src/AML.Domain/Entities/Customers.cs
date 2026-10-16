@@ -243,3 +243,22 @@ public class DoNotOnboardEntry : TenantEntity
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
 }
+
+/// <summary>
+/// A coded value received from a source system for a customer, with its translation. Unmapped values wait here until a
+/// mapping is added, then they are applied to the customer and the customer is re-assessed.
+/// </summary>
+public class CustomerSourceValue : TenantEntity
+{
+    public long CustomerId { get; set; }
+    public string SourceSystem { get; set; } = "";
+    public string Category { get; set; } = "";
+    /// <summary>Where the value goes: customer.nationalityCountry, customer.residenceCountry, customer.incorporationCountry, field:CODE.</summary>
+    public string Target { get; set; } = "";
+    public string ExternalCode { get; set; } = "";
+    public string? MappedCode { get; set; }
+    /// <summary>Mapped, Unmapped.</summary>
+    public string Status { get; set; } = "Mapped";
+    public DateTime ReceivedAt { get; set; }
+    public DateTime? ResolvedAt { get; set; }
+}

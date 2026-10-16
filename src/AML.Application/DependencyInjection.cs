@@ -35,6 +35,9 @@ public static class DependencyInjection
         s.AddScoped<DependencyService>();
         s.AddScoped<FieldConfigService>();
         s.AddScoped<CustomerService>();
+        s.AddScoped<Lookups.CodeMappingService>();
+        s.AddScoped<Lookups.LookupScoreProvider>();
+        s.AddScoped<Lookups.LookupManagementService>();
         s.AddScoped<CddService>();
         s.AddScoped<RiskDataSourceProvider>();
         s.AddScoped<RiskAssessmentService>();

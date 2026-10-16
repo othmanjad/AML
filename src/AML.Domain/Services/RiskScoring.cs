@@ -374,7 +374,12 @@ public static class RiskMethodologyValidator
             if (f.Weight < 0) errors.Add($"Factor {f.Code}: weight cannot be negative.");
             if (string.IsNullOrWhiteSpace(f.DataSource)) errors.Add($"Factor {f.Code}: data source is required.");
             if (f.MissingDataScore is < 0 or > 100) errors.Add($"Factor {f.Code}: missing-data score must be within 0-100.");
-            if (f.Mappings.Count == 0) errors.Add($"Factor {f.Code}: at least one score mapping is required.");
+            if (f.ScoringMode == "LookupScore")
+            {
+                if (string.IsNullOrWhiteSpace(f.LookupCategory)) errors.Add($"Factor {f.Code}: LookupScore mode requires a lookup category.");
+            }
+            else if (f.ScoringMode != "Mapping") errors.Add($"Factor {f.Code}: scoring mode must be Mapping or LookupScore.");
+            else if (f.Mappings.Count == 0) errors.Add($"Factor {f.Code}: at least one score mapping is required.");
             foreach (var mp in f.Mappings)
                 if (mp.Score is < 0 or > 100) errors.Add($"Factor {f.Code}: mapping score {mp.Score} is outside the normalized 0-100 range.");
             errors.AddRange(ValidateMappings(f));

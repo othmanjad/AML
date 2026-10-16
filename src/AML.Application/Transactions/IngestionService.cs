@@ -31,10 +31,12 @@ public sealed class IngestionService
     private readonly ITransientErrorDetector _transient;
     private readonly IAuditService _audit;
     private readonly ILogger<IngestionService> _log;
+    private readonly Lookups.CodeMappingService _codes;
 
     public IngestionService(IAmlDbContext db, ICurrentUser user, IClock clock, ICorrelationContext corr, TenantSettingsService settings, FxService fx,
-        AlertFactory alerts, IFaultInjector faults, ITransientErrorDetector transient, IAuditService audit, ILogger<IngestionService> log)
+        AlertFactory alerts, IFaultInjector faults, ITransientErrorDetector transient, IAuditService audit, ILogger<IngestionService> log, Lookups.CodeMappingService codes)
     {
+        _codes = codes;
         _db = db; _user = user; _clock = clock; _corr = corr; _settings = settings; _fx = fx; _alerts = alerts; _faults = faults; _transient = transient; _audit = audit; _log = log;
     }
 
@@ -229,6 +231,18 @@ public sealed class IngestionService
         var tenant = await _settings.TenantAsync(rec.TenantId, ct);
         var tz = TimeZoneInfo.FindSystemTimeZoneById(tenant.TimeZone);
         var currency = m.Currency!.Trim().ToUpperInvariant();
+        // Source codes → AML codes (Lookup management). Unmapped values are kept as received and flagged.
+        var unmapped = new List<string>();
+        async Task<string?> Map(string category, string? v)
+        {
+            var r = await _codes.MapAsync(source, category, v, ct);
+            if (r.IsUnmapped) unmapped.Add($"{category} '{r.ExternalCode}'");
+            return r.Code ?? v;
+        }
+        m.Type = await Map(Lookups.CodeMappingService.TxnType, m.Type);
+        m.Channel = await Map(Lookups.CodeMappingService.Channel, m.Channel);
+        m.SourceCountry = await Map(Lookups.CodeMappingService.Country, m.SourceCountry);
+        m.DestinationCountry = await Map(Lookups.CodeMappingService.Country, m.DestinationCountry);
         var conv = await _fx.ConvertAsync(rec.TenantId, m.Amount!.Value, currency, tenant.BaseCurrency, eventUtc, ct);
         var t = new Transaction
         {
@@ -297,6 +311,15 @@ public sealed class IngestionService
             {
                 TenantId = rec.TenantId, IssueType = "BalanceMismatch", EntityType = "Transaction", EntityId = m.SourceTransactionId,
                 Description = "Reported balances do not reconcile with the transaction: " + string.Join("; ", mismatches) + ".", Severity = "Medium", CreatedAt = _clock.UtcNow
+            });
+        }
+        if (unmapped.Count > 0)
+        {
+            dq.Add("UnmappedCode");
+            _db.Set<DataQualityIssue>().Add(new DataQualityIssue
+            {
+                TenantId = rec.TenantId, IssueType = "UnmappedCode", EntityType = "Transaction", EntityId = m.SourceTransactionId,
+                Description = $"{source} codes without an AML mapping (kept as received): {string.Join(", ", unmapped)}.", Severity = "Low", CreatedAt = _clock.UtcNow
             });
         }
         if (normalized == "Unknown")

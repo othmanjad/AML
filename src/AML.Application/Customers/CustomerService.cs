@@ -32,11 +32,55 @@ public sealed class CustomerService
     private readonly FieldConfigService _fields;
     private readonly TenantSettingsService _settings;
     private readonly ICorrelationContext _corr;
+    private readonly Lookups.CodeMappingService _codes;
+    /// <summary>Source values translated (or left unmapped) in the current operation; saved with the customer.</summary>
+    private readonly List<CustomerSourceValue> _sourceValues = new();
 
     public CustomerService(IAmlDbContext db, ICurrentUser user, IClock clock, IAuditService audit, ICryptoService crypto, AccessPolicy access,
-        FieldConfigService fields, TenantSettingsService settings, ICorrelationContext corr)
+        FieldConfigService fields, TenantSettingsService settings, ICorrelationContext corr, Lookups.CodeMappingService codes)
     {
-        _db = db; _user = user; _clock = clock; _audit = audit; _crypto = crypto; _access = access; _fields = fields; _settings = settings; _corr = corr;
+        _db = db; _user = user; _clock = clock; _audit = audit; _crypto = crypto; _access = access; _fields = fields; _settings = settings; _corr = corr; _codes = codes;
+    }
+
+    /// <summary>
+    /// Translates a coded core value from the source system. Mapped and unmapped values are recorded; an unmapped value yields
+    /// null (the field is left empty / unchanged) and is queued until a mapping is added.
+    /// </summary>
+    private async Task<string?> MapCodeAsync(string? source, string category, string target, string? value, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return value;
+        var r = await _codes.MapAsync(source, category, value, ct);
+        if (r.Status != "Direct" && source is not null)
+            _sourceValues.Add(new CustomerSourceValue
+            {
+                SourceSystem = source, Category = category, Target = target, ExternalCode = r.ExternalCode, MappedCode = r.Code,
+                Status = r.IsUnmapped ? "Unmapped" : "Mapped", ReceivedAt = _clock.UtcNow, ResolvedAt = r.IsUnmapped ? null : _clock.UtcNow
+            });
+        return r.Code;
+    }
+
+    /// <summary>Persists recorded source values for the customer; unmapped ones also raise an UnmappedCode data-quality item.</summary>
+    private void FlushSourceValues(Customer c)
+    {
+        // A newer value for the same target supersedes values still waiting for a mapping.
+        var targets = _sourceValues.Select(v => v.Target).Distinct().ToList();
+        if (targets.Count > 0 && c.Id > 0)
+            foreach (var old in _db.Set<CustomerSourceValue>().Where(x => x.CustomerId == c.Id && x.Status == "Unmapped" && targets.Contains(x.Target)).ToList())
+                old.Status = "Superseded";
+        foreach (var v in _sourceValues)
+        {
+            v.TenantId = c.TenantId;
+            v.CustomerId = c.Id;
+            _db.Set<CustomerSourceValue>().Add(v);
+            if (v.Status == "Unmapped")
+                _db.Set<DataQualityIssue>().Add(new DataQualityIssue
+                {
+                    TenantId = c.TenantId, IssueType = "UnmappedCode", EntityType = "Customer", EntityId = c.Id.ToString(),
+                    Description = $"{v.SourceSystem} code '{v.ExternalCode}' for {v.Category} ({v.Target}) has no mapping to an AML code; value left empty until a mapping is added (Lookup management).",
+                    Severity = "Medium", CreatedAt = _clock.UtcNow
+                });
+        }
+        _sourceValues.Clear();
     }
 
     private static readonly Dictionary<string, Expression<Func<CustomerListItem, object?>>> Sorts = new()
@@ -217,10 +261,28 @@ public sealed class CustomerService
         void Add(string k, string m) { if (!errors.TryGetValue(k, out var l)) errors[k] = l = new(); l.Add(m); }
         if (string.IsNullOrWhiteSpace(r.SourceSystem)) Add("sourceSystem", "Source system is required.");
         if (string.IsNullOrWhiteSpace(r.ExternalId)) Add("externalId", "External customer ID is required.");
-        if (!CustomerTypes.All.Contains(r.CustomerType)) Add("customerType", $"Unknown customer type '{r.CustomerType}'. Allowed: {string.Join(", ", CustomerTypes.All)}.");
         if (string.IsNullOrWhiteSpace(r.NameLatin) && string.IsNullOrWhiteSpace(r.NameArabic)) Add("name", "A Latin or Arabic name is required.");
         if (r.SourceSystem is { Length: > 0 } && !await _db.Set<SourceSystem>().AnyAsync(s => s.Code == r.SourceSystem && s.IsActive, ct))
             Add("sourceSystem", $"Unknown or inactive source system '{r.SourceSystem}'.");
+        // Source-system codes are translated to AML codes (Lookup management) before validation.
+        var src = string.IsNullOrWhiteSpace(r.SourceSystem) ? null : r.SourceSystem;
+        if (src is not null && !CustomerTypes.All.Contains(r.CustomerType))
+        {
+            var t = await _codes.MapAsync(src, Lookups.CodeMappingService.CustomerType, r.CustomerType, ct);
+            if (t.Status == "Mapped") { _sourceValues.Add(new CustomerSourceValue { SourceSystem = src, Category = Lookups.CodeMappingService.CustomerType, Target = "customer.customerType", ExternalCode = t.ExternalCode, MappedCode = t.Code, Status = "Mapped", ReceivedAt = _clock.UtcNow, ResolvedAt = _clock.UtcNow }); r.CustomerType = t.Code!; }
+            else if (t.IsUnmapped) Add("customerType", $"{src} customer type '{r.CustomerType}' has no mapping to an AML customer type (Lookup management).");
+        }
+        if (!CustomerTypes.All.Contains(r.CustomerType) && !errors.ContainsKey("customerType"))
+            Add("customerType", $"Unknown customer type '{r.CustomerType}'. Allowed: {string.Join(", ", CustomerTypes.All)}.");
+        r.NationalityCountry = await MapCodeAsync(src, Lookups.CodeMappingService.Country, "customer.nationalityCountry", r.NationalityCountry, ct);
+        r.ResidenceCountry = await MapCodeAsync(src, Lookups.CodeMappingService.Country, "customer.residenceCountry", r.ResidenceCountry, ct);
+        r.IncorporationCountry = await MapCodeAsync(src, Lookups.CodeMappingService.Country, "customer.incorporationCountry", r.IncorporationCountry, ct);
+        r.Region = await MapCodeAsync(src, Lookups.CodeMappingService.Region, "customer.region", r.Region, ct);
+        if (r.FinancialProfile is { } fpIn)
+        {
+            fpIn.SourceOfFunds = await MapCodeAsync(src, Lookups.CodeMappingService.SourceOfFunds, "profile.sourceOfFunds", fpIn.SourceOfFunds, ct);
+            fpIn.Occupation = await MapCodeAsync(src, Lookups.CodeMappingService.Occupation, "profile.occupation", fpIn.Occupation, ct);
+        }
         await ValidateCountriesAsync(new[] { r.NationalityCountry, r.ResidenceCountry, r.IncorporationCountry }, Add, ct);
         ValidationException.ThrowIf(errors);
 
@@ -249,6 +311,7 @@ public sealed class CustomerService
         foreach (var i in r.Identifications ?? new()) AddIdentification(c, i);
         foreach (var ci in r.Contacts ?? new()) AddContact(c, ci);
         if (r.FinancialProfile is { } fp) AddFinancialProfile(c, fp, now);
+        FlushSourceValues(c);
         _audit.Record("CUSTOMER_CREATE", "Customer", c.Id.ToString(), null, new
         {
             c.SourceSystem, c.ExternalId, c.CustomerType, c.NameLatin, c.NameArabic, c.NationalityCountry, c.ResidenceCountry,
@@ -367,6 +430,10 @@ public sealed class CustomerService
         var c = await LoadVisibleAsync(id, ct, tracking: true);
         _db.Entry(c).Property(x => x.RowVersion).OriginalValue = Guard.RowVersion(r.RowVersion, "customer");
         var errors = new Dictionary<string, List<string>>();
+        r.NationalityCountry = await MapCodeAsync(c.SourceSystem, Lookups.CodeMappingService.Country, "customer.nationalityCountry", r.NationalityCountry, ct);
+        r.ResidenceCountry = await MapCodeAsync(c.SourceSystem, Lookups.CodeMappingService.Country, "customer.residenceCountry", r.ResidenceCountry, ct);
+        r.IncorporationCountry = await MapCodeAsync(c.SourceSystem, Lookups.CodeMappingService.Country, "customer.incorporationCountry", r.IncorporationCountry, ct);
+        r.Region = await MapCodeAsync(c.SourceSystem, Lookups.CodeMappingService.Region, "customer.region", r.Region, ct);
         await ValidateCountriesAsync(new[] { r.NationalityCountry, r.ResidenceCountry, r.IncorporationCountry },
             (k, m) => { if (!errors.TryGetValue(k, out var l)) errors[k] = l = new(); l.Add(m); }, ct);
         ValidationException.ThrowIf(errors);
@@ -384,6 +451,7 @@ public sealed class CustomerService
         c.NameSearchKey = ArabicNameNormalizer.SearchKey(c.NameLatin, c.NameArabic);
         c.UpdatedAt = _clock.UtcNow;
         c.UpdatedBy = _user.Username;
+        FlushSourceValues(c);
         _audit.Record("CUSTOMER_UPDATE", "Customer", id.ToString(), old,
             new { c.NameLatin, c.NameArabic, c.DateOfBirth, c.NationalityCountry, c.ResidenceCountry, c.IncorporationCountry, c.AssignedOfficer, c.Region, c.IsPep, c.HouseholdId }, r.Reason);
         await _db.SaveChangesAsync(ct);
@@ -480,6 +548,31 @@ public sealed class CustomerService
         void Add(string k, string m) { if (!errors.TryGetValue(k, out var l)) errors[k] = l = new(); l.Add(m); }
         var normalized = values.ToDictionary(k => k.Key.Trim().ToUpperInvariant(), v => v.Value);
         var parsed = new Dictionary<string, (CustomerFieldDefinition Def, ParsedFieldValue? Value)>();
+        // Coded values (select and country fields) from the source system are translated; unmapped codes are queued, not rejected.
+        var unmappedFields = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var code in normalized.Keys.ToList())
+        {
+            if (!defs.TryGetValue(code, out var d0) || d0.DataType is not (FieldDataTypes.SingleSelect or FieldDataTypes.MultiSelect or FieldDataTypes.Country)) continue;
+            var category = d0.DataType == FieldDataTypes.Country ? Lookups.CodeMappingService.Country : code;
+            var raw0 = normalized[code];
+            if (raw0.ValueKind == JsonValueKind.String)
+            {
+                var mapped = await MapCodeAsync(c.SourceSystem, category, "field:" + code, raw0.GetString(), ct);
+                if (mapped is null && !string.IsNullOrWhiteSpace(raw0.GetString())) { normalized.Remove(code); unmappedFields.Add(code); }
+                else normalized[code] = JsonSerializer.SerializeToElement(mapped);
+            }
+            else if (raw0.ValueKind == JsonValueKind.Array)
+            {
+                var list = new List<string>();
+                foreach (var item in raw0.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.String) { list = null; break; }
+                    var mapped = await MapCodeAsync(c.SourceSystem, category, "field:" + code, item.GetString(), ct);
+                    if (mapped is not null) list.Add(mapped);
+                }
+                if (list is not null) normalized[code] = JsonSerializer.SerializeToElement(list.Distinct().ToList());
+            }
+        }
 
         var optionCodes = normalized.Keys.ToList();
         var options = await _db.Set<CustomerFieldOption>().AsNoTracking().Where(o => optionCodes.Contains(o.FieldCode) && o.IsActive)
@@ -500,7 +593,7 @@ public sealed class CustomerService
         }
         if (requireAll)
         {
-            foreach (var def in defs.Values.Where(d => d.IsRequiredFor(c.CustomerType) && !normalized.ContainsKey(d.Code)))
+            foreach (var def in defs.Values.Where(d => d.IsRequiredFor(c.CustomerType) && !normalized.ContainsKey(d.Code) && !unmappedFields.Contains(d.Code)))
                 Add(def.Code, $"{def.LabelEn} ({def.Code}) is required for {c.CustomerType} customers.");
         }
         ValidationException.ThrowIf(errors);
@@ -551,6 +644,7 @@ public sealed class CustomerService
             _audit.Record("CUSTOMER_ATTRIBUTE_CHANGE", "Customer", c.Id.ToString(), new { field = code, value = previousDisplay },
                 new { field = code, value = newDisplay, effectiveFrom = from, fieldVersion = def.Version }, reason);
         }
+        FlushSourceValues(c);
         await _db.SaveChangesAsync(ct);
         return changes.Select(x => (x.Item1, x.Item2.Id)).ToList();
     }

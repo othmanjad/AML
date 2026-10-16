@@ -39,6 +39,9 @@ public sealed class FactorInputDto
     public int? FreshnessDays { get; set; }
     public bool IsActive { get; set; } = true;
     public List<MappingInput>? Mappings { get; set; }
+    /// <summary>Mapping (default) or LookupScore (scores come from the central lookup risk scores of LookupCategory).</summary>
+    public string? ScoringMode { get; set; }
+    public string? LookupCategory { get; set; }
     public string? RowVersion { get; set; }
 }
 
@@ -77,7 +80,7 @@ public sealed class OverrideInput
 public sealed record MappingDto(long Id, string MatchType, string? Value, decimal? RangeMin, decimal? RangeMax, decimal Score, int Priority, string? Label);
 public sealed record FactorDto(long Id, long MethodologyId, string Code, string Name, string CategoryCode, string? Description, string DataSource, string FactorType,
     decimal Weight, string ApplicableCustomerTypes, string MissingDataHandling, decimal? MissingDataScore, int? FreshnessDays, bool IsActive, int Version,
-    string RowVersion, IReadOnlyList<MappingDto> Mappings);
+    string RowVersion, IReadOnlyList<MappingDto> Mappings, string ScoringMode = "Mapping", string? LookupCategory = null);
 public sealed record ThresholdDto(long Id, string Level, decimal MinScore, decimal MaxScore, int ReviewMonths, bool IsSample);
 public sealed record OverrideDto(long Id, string Code, string ConditionDataSource, string ConditionOperator, string ConditionValue, string MinimumLevel, string Reason,
     int Priority, bool RequiresApproval, bool IsSanctionsWorkflow, bool IsActive);
@@ -112,7 +115,8 @@ public sealed class RiskConfigService
 
     public static FactorDto ToDto(RiskFactorDefinition f) => new(f.Id, f.MethodologyId, f.Code, f.Name, f.CategoryCode, f.Description, f.DataSource, f.FactorType, f.Weight,
         f.ApplicableCustomerTypes, f.MissingDataHandling, f.MissingDataScore, f.FreshnessDays, f.IsActive, f.Version, Convert.ToBase64String(f.RowVersion),
-        f.Mappings.OrderByDescending(x => x.Priority).ThenBy(x => x.RangeMin).Select(x => new MappingDto(x.Id, x.MatchType, x.Value, x.RangeMin, x.RangeMax, x.Score, x.Priority, x.Label)).ToList());
+        f.Mappings.OrderByDescending(x => x.Priority).ThenBy(x => x.RangeMin).Select(x => new MappingDto(x.Id, x.MatchType, x.Value, x.RangeMin, x.RangeMax, x.Score, x.Priority, x.Label)).ToList(),
+        f.ScoringMode, f.LookupCategory);
 
     public async Task<List<MethodologyDto>> ListAsync(CancellationToken ct)
     {
@@ -204,7 +208,7 @@ public sealed class RiskConfigService
             var nf = new RiskFactorDefinition
             {
                 TenantId = f.TenantId, Code = f.Code, Name = f.Name, CategoryCode = f.CategoryCode, Description = f.Description, DataSource = f.DataSource,
-                FactorType = f.FactorType, Weight = f.Weight, ScoringMode = f.ScoringMode, ApplicableCustomerTypes = f.ApplicableCustomerTypes,
+                FactorType = f.FactorType, Weight = f.Weight, ScoringMode = f.ScoringMode, LookupCategory = f.LookupCategory, ApplicableCustomerTypes = f.ApplicableCustomerTypes,
                 MissingDataHandling = f.MissingDataHandling, MissingDataScore = f.MissingDataScore, FreshnessDays = f.FreshnessDays, IsActive = f.IsActive,
                 EffectiveFrom = f.EffectiveFrom, EffectiveTo = f.EffectiveTo, Version = f.Version
             };
@@ -306,6 +310,8 @@ public sealed class RiskConfigService
         if (i.Weight < 0) Add("weight", "Weight cannot be negative.");
         if (i.MissingDataHandling is not ("AssignScore" or "ExcludeWithWarning")) Add("missingDataHandling", "Allowed: AssignScore, ExcludeWithWarning.");
         if (i.MissingDataScore is < 0 or > 100) Add("missingDataScore", "Must be within 0-100.");
+        if (i.ScoringMode is not (null or "Mapping" or "LookupScore")) Add("scoringMode", "Allowed: Mapping, LookupScore.");
+        if (i.ScoringMode == "LookupScore" && string.IsNullOrWhiteSpace(i.LookupCategory)) Add("lookupCategory", "LookupScore mode requires a lookup category (e.g. OCCUPATION, COUNTRY).");
         foreach (var mp in i.Mappings ?? new())
         {
             if (mp.MatchType is not ("Equals" or "In" or "Range" or "Boolean" or "Default")) Add("mappings", $"Unknown match type '{mp.MatchType}'.");
@@ -335,6 +341,8 @@ public sealed class RiskConfigService
         f.MissingDataScore = i.MissingDataScore;
         f.FreshnessDays = i.FreshnessDays;
         f.IsActive = i.IsActive;
+        f.ScoringMode = i.ScoringMode ?? "Mapping";
+        f.LookupCategory = f.ScoringMode == "LookupScore" ? i.LookupCategory!.Trim().ToUpperInvariant() : null;
         if (i.Mappings is not null)
         {
             _db.Set<RiskFactorScoreMapping>().RemoveRange(f.Mappings);

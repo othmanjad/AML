@@ -40,9 +40,12 @@ public sealed class RiskAssessmentService
     private readonly ILogger<RiskAssessmentService> _log;
     private readonly RiskScoringEngine _engine = new();
 
+    private readonly Lookups.LookupScoreProvider _lookupScores;
+
     public RiskAssessmentService(IAmlDbContext db, ICurrentUser user, IClock clock, IAuditService audit, RiskDataSourceProvider sources, CustomerService customers,
-        ICorrelationContext corr, TenantSettingsService settings, IFaultInjector faults, ILogger<RiskAssessmentService> log)
+        ICorrelationContext corr, TenantSettingsService settings, IFaultInjector faults, ILogger<RiskAssessmentService> log, Lookups.LookupScoreProvider lookupScores)
     {
+        _lookupScores = lookupScores;
         _db = db; _user = user; _clock = clock; _audit = audit; _sources = sources; _customers = customers; _corr = corr; _settings = settings; _faults = faults; _log = log;
     }
 
@@ -100,6 +103,7 @@ public sealed class RiskAssessmentService
         var at = asOf ?? _clock.UtcNow;
         var m = await SelectMethodologyAsync(c.TenantId, c.CustomerType, at, ct)
                 ?? throw new ConflictException($"No approved risk methodology is effective for customer type {c.CustomerType} at {at:O}.");
+        await _lookupScores.InjectAsync(m, at, ct);
         var inputs = await _sources.GatherAsync(c, m.Factors.Select(f => f.DataSource).Concat(m.Overrides.Select(o => o.ConditionDataSource)), at, ct);
         _faults.Check("risk.calculate");
         var r = _engine.Evaluate(m, c.CustomerType, inputs, at);
@@ -154,7 +158,7 @@ public sealed class RiskAssessmentService
         m.EffectiveFrom, m.EffectiveTo, m.ApprovedBy, m.ApprovedAt,
         Factors = m.Factors.Select(f => new
         {
-            f.Code, f.Name, f.CategoryCode, f.DataSource, f.Weight, f.Version, f.ApplicableCustomerTypes, f.MissingDataHandling, f.MissingDataScore, f.FreshnessDays, f.IsActive,
+            f.Code, f.Name, f.CategoryCode, f.DataSource, f.Weight, f.Version, f.ApplicableCustomerTypes, f.MissingDataHandling, f.MissingDataScore, f.FreshnessDays, f.IsActive, f.ScoringMode, f.LookupCategory,
             Mappings = f.Mappings.Select(mp => new { mp.MatchType, mp.Value, mp.RangeMin, mp.RangeMax, mp.Score, mp.Priority, mp.Label })
         }),
         Thresholds = m.Thresholds.Select(t => new { t.Level, t.MinScore, t.MaxScore, t.ReviewMonths }),
@@ -420,6 +424,7 @@ public sealed class RiskAssessmentService
         var m = await LoadGraphAsync(methodologyId, ct);
         if (m.TenantId != _user.TenantId) throw new NotFoundException("Methodology", methodologyId);
         var at = asOf ?? (m.EffectiveFrom > _clock.UtcNow ? m.EffectiveFrom : _clock.UtcNow);
+        await _lookupScores.InjectAsync(m, at, ct);
         Dictionary<string, FactorInput> factorInputs;
         string type;
         if (customerId is { } cid)

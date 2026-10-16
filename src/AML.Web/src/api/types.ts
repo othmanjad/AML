@@ -232,6 +232,8 @@ export interface Factor {
   version: number;
   rowVersion: string;
   mappings: Mapping[];
+  scoringMode?: string;
+  lookupCategory?: string | null;
 }
 
 export interface Threshold {

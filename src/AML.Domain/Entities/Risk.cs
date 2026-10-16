@@ -66,7 +66,12 @@ public class RiskFactorDefinition : TenantEntity, IConcurrencyAware
     /// <summary>Categorical, Numeric, Boolean.</summary>
     public string FactorType { get; set; } = "Categorical";
     public decimal Weight { get; set; }
+    /// <summary>
+    /// Mapping (score mappings of this factor) or LookupScore (score of the value's code in the central lookup risk scores of
+    /// LookupCategory; the factor's own mappings, when present, take precedence).
+    /// </summary>
     public string ScoringMode { get; set; } = "Mapping";
+    public string? LookupCategory { get; set; }
     public string ApplicableCustomerTypes { get; set; } = "";
     /// <summary>AssignScore (score MissingDataScore) or ExcludeWithWarning.</summary>
     public string MissingDataHandling { get; set; } = "AssignScore";

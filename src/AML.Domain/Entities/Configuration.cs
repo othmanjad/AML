@@ -108,3 +108,43 @@ public class IndustryBenchmark : TenantEntity
     public DateTime CreatedAt { get; set; }
     public string? CreatedBy { get; set; }
 }
+
+/// <summary>
+/// Translation of a source system's code (e.g. the wallet's occupation code "OCC-017") to the AML platform's code
+/// ("STUDENT") for a lookup category (COUNTRY, CUSTOMER_TYPE, a select field code such as OCCUPATION, TXN_TYPE, CHANNEL, ...).
+/// </summary>
+public class LookupCodeMapping : TenantEntity, IConcurrencyAware
+{
+    public string SourceSystem { get; set; } = "";
+    public string Category { get; set; } = "";
+    public string ExternalCode { get; set; } = "";
+    public string? ExternalLabel { get; set; }
+    public string Code { get; set; } = "";
+    public bool IsActive { get; set; } = true;
+    public string? Notes { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string? CreatedBy { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public string? UpdatedBy { get; set; }
+    public byte[] RowVersion { get; set; } = Array.Empty<byte>();
+}
+
+/// <summary>
+/// Risk score (0–100) of an AML code in a lookup category, used by risk factors in LookupScore mode. Scores are
+/// effective-dated and need approval by a second person before they are used.
+/// </summary>
+public class LookupRiskScore : TenantEntity
+{
+    public string Category { get; set; } = "";
+    public string Code { get; set; } = "";
+    public decimal Score { get; set; }
+    public string? Rationale { get; set; }
+    /// <summary>PendingApproval, Approved, Rejected, Superseded.</summary>
+    public string Status { get; set; } = "PendingApproval";
+    public DateTime EffectiveFrom { get; set; }
+    public DateTime? EffectiveTo { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string? CreatedBy { get; set; }
+    public string? ApprovedBy { get; set; }
+    public DateTime? ApprovedAt { get; set; }
+}

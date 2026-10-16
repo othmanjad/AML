@@ -58,6 +58,7 @@ export const NAV: NavItem[] = [
       { key: 'benchmarks', path: '/admin/benchmarks', perm: 'rules.read' },
       { key: 'walletMappings', path: '/admin/wallet-mappings', perm: 'admin.wallet-mappings', icon: <BankOutlined /> },
       { key: 'lookups', path: '/admin/lookups', perm: 'admin.lookups' },
+      { key: 'lookupManagement', path: '/admin/lookup-management', perm: 'risk.read' },
       { key: 'users', path: '/admin/users', perm: 'admin.users' },
       { key: 'audit', path: '/admin/audit', perm: 'audit.read', icon: <AuditOutlined /> },
       { key: 'jurisdiction', path: '/admin/jurisdiction', perm: 'jurisdiction.manage' },

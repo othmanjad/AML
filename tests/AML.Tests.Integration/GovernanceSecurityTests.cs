@@ -449,7 +449,7 @@ public class SecurityApiTests : AmlTestBase
             foreach (var (e, perm, methods) in endpoints.Where(x => !RoleCodes.Defaults[role].Contains(x.perm!)))
             {
                 var path = "/" + System.Text.RegularExpressions.Regex.Replace(e.RoutePattern.RawText!.TrimStart('/'), @"\{([a-zA-Z]+)(:[a-z]+)?\}", m => m.Groups[2].Value == ":guid" ? Guid.Empty.ToString() : m.Groups[2].Value == ":long" ? "999999" : "X");
-                object? body = methods!.First() is "GET" or "DELETE" ? null : path.EndsWith("/documents") ? new MultipartFormDataContent { { new ByteArrayContent(new byte[] { 1 }), "file", "a.pdf" } } : new { };
+                object? body = methods!.First() is "GET" or "DELETE" ? null : path.EndsWith("/documents") || path.EndsWith("/import") ? new MultipartFormDataContent { { new ByteArrayContent(new byte[] { 1 }), "file", "a.pdf" } } : new { };
                 var r = await api.Send(new HttpMethod(methods!.First()), path, body);
                 checkedCount++;
                 if (r.Status != HttpStatusCode.Forbidden) failures.Add($"{u} {methods!.First()} {path} → {(int)r.Status}");

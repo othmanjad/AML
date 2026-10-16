@@ -274,6 +274,22 @@ public sealed class AmlDbContext : DbContext, IAmlDbContext
             e.HasIndex(x => x.ReportNumber).IsUnique(); e.HasIndex(x => new { x.TenantId, x.CustomerId, x.BusinessDate }).IsUnique(); e.HasIndex(x => x.Status);
             e.HasOne<Customer>().WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
         });
+        m.Entity<LookupCodeMapping>(e =>
+        {
+            S(e.Property(x => x.SourceSystem), 50); S(e.Property(x => x.Category), 64); S(e.Property(x => x.ExternalCode), 100); S(e.Property(x => x.Code), 100);
+            e.HasIndex(x => new { x.TenantId, x.SourceSystem, x.Category, x.ExternalCode }).IsUnique();
+        });
+        m.Entity<LookupRiskScore>(e =>
+        {
+            S(e.Property(x => x.Category), 64); S(e.Property(x => x.Code), 100); S(e.Property(x => x.Status), 30); e.Property(x => x.Score).HasPrecision(9, 4);
+            e.HasIndex(x => new { x.TenantId, x.Category, x.Code, x.Status });
+        });
+        m.Entity<CustomerSourceValue>(e =>
+        {
+            S(e.Property(x => x.SourceSystem), 50); S(e.Property(x => x.Category), 64); S(e.Property(x => x.Target), 100); S(e.Property(x => x.ExternalCode), 100);
+            S(e.Property(x => x.MappedCode), 100); S(e.Property(x => x.Status), 20);
+            e.HasIndex(x => new { x.TenantId, x.SourceSystem, x.Category, x.ExternalCode, x.Status }); e.HasIndex(x => x.CustomerId);
+        });
         m.Entity<IndustryBenchmark>(e =>
         {
             S(e.Property(x => x.Metric), 50); S(e.Property(x => x.SegmentField), 100); S(e.Property(x => x.SegmentValue), 200);

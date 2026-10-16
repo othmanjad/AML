@@ -70,12 +70,48 @@ Device signals (`POST /api/customers/{id}/device-signals`): `{ deviceId, ipAddre
 
 Cash transaction reports (CTR): the `ctr-generator` job (every 6 h, last `Reporting:CtrLookbackDays` business days, default 3) or `POST /api/ctr-reports/generate` aggregates, per customer and local business date, completed cash transactions of the types in `Reporting:CtrTransactionTypes` (default `CashIn,CashOut`) net of reversals in the base currency. Customers of the types in `Reporting:CtrExcludedCustomerTypes` (default `Agent`) are not subjects. A total ≥ jurisdiction value `CTR_THRESHOLD` (seed 10,000 JOD, *to be confirmed*) creates a draft; due date = business date + `CTR_FILING_DEADLINE` days (seed 15). Drafts are refreshed when late transactions arrive; approved/exported/submitted reports never change. Approval requires a user other than the preparer; export formats are placeholders until the FIU schema is confirmed; submission is recorded manually and test data can never be submitted.
 
+## Lookup management (source-code mapping and per-code risk scores)
+
+Source systems send their own codes; the platform translates them with **code mappings** (`sourceSystem`, `category`, `externalCode` → AML `code`).
+
+| Category | Applied to |
+|---|---|
+| `CUSTOMER_TYPE` | `customerType` |
+| `COUNTRY` | nationality / residence / incorporation, Country fields, transaction source/destination country |
+| `REGION`, `SOURCE_OF_FUNDS`, `OCCUPATION` | customer region, financial-profile source of funds / occupation (free text) |
+| `<FIELD_CODE>` (e.g. `OCCUPATION`, `SOURCE_OF_INCOME`) | single/multi-select dynamic fields |
+| `TXN_TYPE`, `CHANNEL` | transaction type and channel |
+
+- A category becomes *managed* for a source once it has one active mapping. Then an unknown code is **not rejected**: the value is left empty, recorded in the unmapped queue (`CustomerSourceValues`) with an `UnmappedCode` data-quality item, and applied automatically — with risk re-assessment of the customer — when a mapping is added. Categories without mappings keep strict validation of AML codes. Transactions keep an unmapped code as received and get an `UnmappedCode` data-quality item.
+- **Risk scores per code** (`LookupRiskScore`, 0–100) are proposed (`risk.config`) and approved by another user (`risk.approve`); approval supersedes the previous score and re-assesses the customers holding the code (up to 2,000 per change).
+- A risk factor with `scoringMode: "LookupScore"` and `lookupCategory` takes the approved score of the value's code (its own mappings, if any, take precedence; multi-value fields use the highest code score). The methodology thresholds turn the weighted total into Low / Medium / High, so levels follow the lookup configuration dynamically. The scores used are stored in each assessment's configuration snapshot.
+
+```jsonc
+POST /api/admin/lookup-management/mappings   { "sourceSystem": "WALLET", "category": "OCCUPATION", "externalCode": "OCC-017", "externalLabel": "Student", "code": "STUDENT" }
+// → { mapping, remap: { valuesApplied, customersReassessed, warnings } }
+POST /api/admin/lookup-management/mappings/import   (multipart file: sourceSystem,category,externalCode,code[,externalLabel])
+POST /api/admin/lookup-management/scores     { "category": "OCCUPATION", "code": "STUDENT", "score": 25, "rationale": "…", "effectiveFrom": null }
+POST /api/admin/lookup-management/scores/{id}/approve   { "comment": "ok" }   // → { score, affectedCustomers, reassessed, warnings }
+// Risk factor in LookupScore mode (POST /api/admin/risk-methodologies/{id}/factors)
+{ "code": "OCCUPATION", "name": "Occupation", "categoryCode": "CUSTOMER_PROFILE", "dataSource": "field:OCCUPATION", "weight": 2,
+  "missingDataHandling": "AssignScore", "missingDataScore": 50, "scoringMode": "LookupScore", "lookupCategory": "OCCUPATION" }
+```
+
 ## Endpoint catalogue
 
 | Area | Method | Path | Permission |
 |---|---|---|---|
 | Dashboard | GET | `/api/dashboard` | dashboard.read |
 | Integrations | POST | `/api/integrations/{source}/balances` | integrations.ingest |
+| Lookups | GET | `/api/admin/lookup-management/categories` | risk.read |
+| Lookups | GET | `/api/admin/lookup-management/mappings?sourceSystem&category&search` | risk.read |
+| Lookups | POST | `/api/admin/lookup-management/mappings` | admin.lookups |
+| Lookups | PUT | `/api/admin/lookup-management/mappings/{id}` | admin.lookups |
+| Lookups | POST | `/api/admin/lookup-management/mappings/import` (CSV) | admin.lookups |
+| Lookups | GET | `/api/admin/lookup-management/unmapped` | risk.read |
+| Lookups | GET | `/api/admin/lookup-management/scores?category&includeHistory` | risk.read |
+| Lookups | POST | `/api/admin/lookup-management/scores` | risk.config |
+| Lookups | POST | `/api/admin/lookup-management/scores/{id}/approve` · `/reject` | risk.approve |
 | Customers | GET | `/api/customers/{id}/balances?from&to` | transactions.read |
 | CTR | GET | `/api/ctr-reports?status&from&to` | str.prepare |
 | CTR | GET | `/api/ctr-reports/{id}` | str.prepare |

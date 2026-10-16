@@ -95,7 +95,7 @@ function FactorModal({ m, factor, open, onClose, onSaved }: { m: Methodology; fa
   };
   const initial = factor
     ? { ...factor, applicableCustomerTypes: factor.applicableCustomerTypes ? factor.applicableCustomerTypes.split(',').filter(Boolean) : [] }
-    : { factorType: 'Categorical', weight: 1, missingDataHandling: 'AssignScore', missingDataScore: 50, isActive: true, mappings: [{ matchType: 'Default', score: 50, priority: 0 }] };
+    : { factorType: 'Categorical', weight: 1, missingDataHandling: 'AssignScore', missingDataScore: 50, isActive: true, scoringMode: 'Mapping', mappings: [{ matchType: 'Default', score: 50, priority: 0 }] };
   return (
     <Modal
       open={open}
@@ -145,6 +145,18 @@ function FactorModal({ m, factor, open, onClose, onSaved }: { m: Methodology; fa
           </Form.Item>
           <Form.Item name="isActive" label={fl('isActive')} valuePropName="checked">
             <Switch />
+          </Form.Item>
+          <Form.Item name="scoringMode" label={fl('scoringMode')} tooltip={t('risk.scoringModeHelp')}>
+            <Select data-testid="factor-scoring-mode" options={lv(['Mapping', 'LookupScore'])} />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(a, b) => a.scoringMode !== b.scoringMode}>
+            {({ getFieldValue }) =>
+              getFieldValue('scoringMode') === 'LookupScore' && (
+                <Form.Item name="lookupCategory" label={fl('lookupCategory')} rules={[{ required: true }]}>
+                  <Input data-testid="factor-lookup-category" dir="ltr" placeholder="OCCUPATION, COUNTRY, CUSTOMER_TYPE…" />
+                </Form.Item>
+              )
+            }
           </Form.Item>
         </div>
         <Form.Item name="description" label={fl('description')}>
@@ -463,7 +475,7 @@ export function MethodologyDetail() {
                           ),
                         }}
                         columns={[
-                          ...cols<Factor>('code', 'name', 'categoryCode', 'dataSource', 'factorType', 'weight', 'applicableCustomerTypes', 'missingDataHandling', 'missingDataScore', 'isActive'),
+                          ...cols<Factor>('code', 'name', 'categoryCode', 'dataSource', 'scoringMode', 'lookupCategory', 'factorType', 'weight', 'applicableCustomerTypes', 'missingDataHandling', 'missingDataScore', 'isActive'),
                           {
                             key: 'actions',
                             title: t('f.actions'),
