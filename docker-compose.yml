@@ -1,0 +1,77 @@
+# AML Platform — test/staging deployment with Docker (Linux containers).
+# 1. Copy deploy/docker/.env.example to .env (or run deploy/docker/generate-env.ps1) and fill every value.
+# 2. docker compose up -d --build
+# 3. Open http://<server>:<WEB_PORT>  (default 8080)
+name: aml
+
+services:
+  sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: ${MSSQL_PID:-Developer}
+      MSSQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?Set SQL_SA_PASSWORD in .env}
+    volumes:
+      - sql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    # Not published to the host by default. Uncomment to connect with SQL Server Management Studio:
+    # ports: ["1433:1433"]
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/docker/api.Dockerfile
+    image: aml-api:latest
+    restart: unless-stopped
+    depends_on:
+      sql:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Staging}
+      ConnectionStrings__Aml: "Server=sql,1433;Database=${SQL_DATABASE:-AmlDb};User Id=sa;Password=${SQL_SA_PASSWORD};TrustServerCertificate=true;Encrypt=true"
+      Security__EncryptionKey: ${SECURITY_ENCRYPTION_KEY:?Set SECURITY_ENCRYPTION_KEY in .env}
+      Security__SearchTokenKey: ${SECURITY_SEARCH_TOKEN_KEY:?Set SECURITY_SEARCH_TOKEN_KEY in .env}
+      Security__IntegrityKey: ${SECURITY_INTEGRITY_KEY:?Set SECURITY_INTEGRITY_KEY in .env}
+      Security__EncryptionKeyId: ${SECURITY_ENCRYPTION_KEY_ID:-k1}
+      Auth__SigningKey: ${AUTH_SIGNING_KEY:?Set AUTH_SIGNING_KEY in .env}
+      Auth__Authority: ${AUTH_AUTHORITY:-}
+      DevAuth__Enabled: ${DEVAUTH_ENABLED:-true}
+      DevAuth__SeedPassword: ${DEVAUTH_SEED_PASSWORD:-}
+      Integrations__SeedClientSecret: ${INTEGRATION_CLIENT_SECRET:-}
+      Database__MigrateOnStartup: "true"
+      Seed__DemoData: ${SEED_DEMO_DATA:-false}
+      Jobs__RunInApi: "true"
+      Integrations__CoreAdapter: Mock
+      Storage__Root: /data/storage
+      Logging__FilePath: /data/logs/aml-.log
+      Https__Redirect: ${HTTPS_REDIRECT:-false}
+      Proxy__TrustForwardedHeaders: "true"
+      Swagger__Enabled: ${SWAGGER_ENABLED:-false}
+      Cors__Origins: ${PUBLIC_URL:-http://localhost:8080}
+    volumes:
+      - api-data:/data
+    # The API is reachable only through the web container (nginx).
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/docker/web.Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.27-alpine}
+    image: aml-web:latest
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  sql-data:
+  api-data:

@@ -1,5 +1,8 @@
 # AML & Transaction-Monitoring Platform (v1.1 implementation)
 
+
+> **Docker deployment (server):** `docker compose up -d --build` after creating `.env` — see [docs/DEPLOY-DOCKER.md](docs/DEPLOY-DOCKER.md).
+
 Configurable anti-money-laundering platform implemented from *AML Platform AI Implementation Specification v1.1*:
 dynamic customer data model, configurable customer risk assessment (CRA), JSON rule engine with batch and real-time
 monitoring, alerts and case management, sanctions/PEP screening with list management, compliance actions (freeze/hold)

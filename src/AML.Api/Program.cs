@@ -96,18 +96,27 @@ if (string.Equals(config["Database:MigrateOnStartup"], "true", StringComparison.
     if (string.Equals(config["Seed:DemoData"], "true", StringComparison.OrdinalIgnoreCase)) await DemoDataSeeder.SeedAsync(app.Services, tenant.Id);
 }
 
-app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
+var forwarded = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto };
+// Behind a reverse proxy on a private container network (e.g. docker compose), the proxy's address is not loopback.
+// Only enable when the API is reachable exclusively through that proxy.
+if (string.Equals(config["Proxy:TrustForwardedHeaders"], "true", StringComparison.OrdinalIgnoreCase))
+{
+    forwarded.KnownNetworks.Clear();
+    forwarded.KnownProxies.Clear();
+}
+app.UseForwardedHeaders(forwarded);
 app.UseMiddleware<CorrelationMiddleware>();
 app.UseAmlExceptionHandler();
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || string.Equals(config["Swagger:Enabled"], "true", StringComparison.OrdinalIgnoreCase))
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-else
+if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
-    app.UseHttpsRedirection();
+    // Set Https:Redirect=false only when TLS is terminated elsewhere or for an internal HTTP-only test deployment.
+    if (!string.Equals(config["Https:Redirect"], "false", StringComparison.OrdinalIgnoreCase)) app.UseHttpsRedirection();
 }
 app.UseSerilogRequestLogging(o => o.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0} ms");
 app.Use(async (ctx, next) =>

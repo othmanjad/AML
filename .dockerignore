@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/TestResults/
+**/test-results/
+**/playwright-report/
+.git/
+.vs/
+.vscode/
+.idea/
+docs/
+tests/
+*.user
+.env
