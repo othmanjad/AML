@@ -80,7 +80,7 @@ export function TransactionDetail() {
             <Section title={t('txn.sourceFields')} testId="txn-source">
               <KV
                 data={x}
-                keys={['sourceSystem', 'sourceTransactionId', 'originalReference', 'transactionType', 'sourceStatus', 'status', 'channel', 'amount', 'currency', 'fee', 'netAmount', 'reversedAmount', 'businessDate', 'timestampUtc', 'ingestedAt', 'ingestionRunId', 'dataQualityStatus', 'isReversal', 'isRefund', 'originalSourceTransactionId', 'sourceCountry', 'destinationCountry', 'remarks', 'copResult', 'payloadHash']}
+                keys={['sourceSystem', 'sourceTransactionId', 'originalReference', 'transactionType', 'sourceStatus', 'status', 'subType', 'mcc', 'channel', 'amount', 'currency', 'fee', 'commission', 'senderBalanceBefore', 'senderBalanceAfter', 'receiverBalanceBefore', 'receiverBalanceAfter', 'invoiceNumber', 'invoiceAmount', 'invoiceCurrency', 'goodsCategory', 'netAmount', 'reversedAmount', 'businessDate', 'timestampUtc', 'ingestedAt', 'ingestionRunId', 'dataQualityStatus', 'isReversal', 'isRefund', 'originalSourceTransactionId', 'sourceCountry', 'destinationCountry', 'remarks', 'copResult', 'payloadHash']}
               />
             </Section>
             <Section title={t('txn.fxEvidence')} testId="txn-fx">

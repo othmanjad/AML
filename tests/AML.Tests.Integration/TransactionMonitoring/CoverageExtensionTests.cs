@@ -311,4 +311,35 @@ public class CoverageExtensionTests : TmBase
         gen["threshold"]!.GetValue<decimal>().Should().Be(10000);
         Done();
     }
+
+    [Fact]
+    public async Task Transaction_balances_mcc_subtype_and_commission()
+    {
+        var c1 = await Cust(); var c2 = await Cust(); var c3 = await Cust();
+        object Tx(string id, string from, decimal amount, string mcc, decimal before, decimal after, decimal fee = 1, string sub = "MERCHANT_QR") => new
+        {
+            sourceTransactionId = id, type = "MerchantPayment", subType = sub, status = "SUCC", eventTime = At(2026, 4, 25, "10:00:00"), channel = "Mobile", amount, currency = "JOD",
+            fee, commission = 0.5m, mcc, senderWallet = from, receiverWallet = "W-MERCHANT", senderBalanceBefore = before, senderBalanceAfter = after,
+            receiverBalanceBefore = 50m, receiverBalanceAfter = 50m + amount, sourceCountry = "JO", destinationCountry = "JO"
+        };
+        var ids = Enumerable.Range(0, 4).Select(i => $"COV-TXD-{i}-" + Guid.NewGuid().ToString("N")[..8]).ToArray();
+        var r = await Ingest(Tx(ids[0], c1.W, 100, "5411", 1000, 899), Tx(ids[1], c1.W, 100, "5411", 1000, 950),
+            Tx(ids[2], c2.W, 950, "7995", 1000, 49), Tx(ids[3], c3.W, 950, "5411", 1000, 49));
+        var bad = await Ingest(Tx("COV-TXD-BAD-" + Guid.NewGuid().ToString("N")[..6], c1.W, 10, "54A1", 100, 89));
+        var detail = await (await As("manager")).GetOk($"/api/transactions/{await TxnId(ids[0])}");
+        var tx = detail["transaction"]!;
+        Result("COV-TXD-01", tx["mcc"]?.GetValue<string>() == "5411" && tx["subType"]?.GetValue<string>() == "MERCHANT_QR" && tx["commission"]?.GetValue<decimal>() == 0.5m &&
+                             tx["fee"]?.GetValue<decimal>() == 1 && tx["senderBalanceBefore"]?.GetValue<decimal>() == 1000 && tx["senderBalanceAfter"]?.GetValue<decimal>() == 899 &&
+                             tx["receiverBalanceAfter"]?.GetValue<decimal>() == 150,
+            $"Stored and shown on the transaction: MCC {tx["mcc"]}, sub-type {tx["subType"]}, fee {tx["fee"]}, commission {tx["commission"]}, sender balance {tx["senderBalanceBefore"]} → {tx["senderBalanceAfter"]}, receiver {tx["receiverBalanceBefore"]} → {tx["receiverBalanceAfter"]}.");
+        var dq = await F.WithDb(db => db.Set<DataQualityIssue>().Where(d => d.IssueType == "BalanceMismatch" && (d.EntityId == ids[0] || d.EntityId == ids[1])).Select(d => d.EntityId).ToListAsync());
+        Result("COV-TXD-02", dq.Count == 1 && dq[0] == ids[1] && r["processed"]!.GetValue<int>() == 4,
+            $"1000 − 100 − fee 1 = 899 reconciles; 1000 − 100 − 1 ≠ 950 → BalanceMismatch data-quality item (transaction still accepted).");
+        Result("COV-TXD-03", bad["records"]![0]!["status"]!.GetValue<string>() == "DeadLetter", $"MCC '54A1' → {bad["records"]![0]!["status"]} ({bad["records"]![0]!["error"]}).");
+        var rule = await Rule(new { condition = And(F_("txn.mcc", "in", new[] { "7995", "7801", "7802" }), F_("txn.balanceSharePct", "gte", 90), F_("txn.commission", "gte", 0)) }, "High");
+        await Run(rule, At(2026, 4, 25, "00:00:00"), At(2026, 4, 26, "00:00:00"));
+        Result("COV-TXD-04", (await Alerts(rule, c2.Id)).Count == 1 && (await Alerts(rule, c3.Id)).Count == 0,
+            $"Gambling MCC 7995 paying 95 % of the balance before the transaction (from senderBalanceBefore) → {(await Alerts(rule, c2.Id)).Count} alert; same payment at MCC 5411 → {(await Alerts(rule, c3.Id)).Count} alerts.");
+        Done();
+    }
 }

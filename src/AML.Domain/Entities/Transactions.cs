@@ -82,6 +82,17 @@ public class Transaction : TenantEntity, IConcurrencyAware
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "";
     public decimal? Fee { get; set; }
+    /// <summary>Commission paid to the agent/merchant/partner for the transaction (transaction currency), separate from the customer fee.</summary>
+    public decimal? Commission { get; set; }
+    /// <summary>Source system's own transaction code / sub-type (e.g. "CASHIN_AGENT", "P2P_QR").</summary>
+    public string? SubType { get; set; }
+    /// <summary>Merchant category code (ISO 18245, 4 digits).</summary>
+    public string? Mcc { get; set; }
+    /// <summary>Wallet balances reported by the core immediately before and after the transaction (transaction currency).</summary>
+    public decimal? SenderBalanceBefore { get; set; }
+    public decimal? SenderBalanceAfter { get; set; }
+    public decimal? ReceiverBalanceBefore { get; set; }
+    public decimal? ReceiverBalanceAfter { get; set; }
     public decimal? BaseAmount { get; set; }
     public string? BaseCurrency { get; set; }
     public decimal? FxRate { get; set; }

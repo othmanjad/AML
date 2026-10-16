@@ -317,6 +317,9 @@ public sealed class RuleDataProvider : IRuleDataProvider
         SenderWallet = t.SenderWalletExternalId, ReceiverWallet = t.ReceiverWalletExternalId, AgentCustomerId = t.AgentCustomerId, SourceCountry = t.SourceCountry,
         DestinationCountry = t.DestinationCountry, Remarks = t.Remarks, DeviceId = t.DeviceId, CopResult = t.CopResult, ReversedAmount = t.ReversedAmount,
         InvoiceAmount = t.InvoiceAmount, InvoiceCurrency = t.InvoiceCurrency, GoodsCategory = t.GoodsCategory,
+        Commission = t.Commission, SubType = t.SubType, Mcc = t.Mcc,
+        BalanceBefore = direction == "in" ? t.ReceiverBalanceBefore : t.SenderBalanceBefore,
+        BalanceAfter = direction == "in" ? t.ReceiverBalanceAfter : t.SenderBalanceAfter,
         IsReversal = t.IsReversal, Direction = direction
     };
 }

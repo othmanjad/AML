@@ -196,6 +196,7 @@ public static class RuleFieldRegistry
     public static readonly Dictionary<string, string> Fields = new(StringComparer.Ordinal)
     {
         ["txn.amount"] = Number, ["txn.baseAmount"] = Number, ["txn.fee"] = Number, ["txn.localHour"] = Number,
+        ["txn.commission"] = Number, ["txn.subType"] = Text, ["txn.mcc"] = Text, ["txn.balanceBefore"] = Number, ["txn.balanceAfter"] = Number,
         ["txn.currency"] = Text, ["txn.type"] = Text, ["txn.channel"] = Text, ["txn.status"] = Text,
         ["txn.sourceCountry"] = Text, ["txn.destinationCountry"] = Text, ["txn.remarks"] = Text, ["txn.copResult"] = Text,
         ["txn.direction"] = Text, ["txn.isCrossBorder"] = Bool, ["txn.isOwnAccount"] = Bool,

@@ -6038,6 +6038,10 @@ namespace AML.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
+                    b.Property<decimal?>("Commission")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
                     b.Property<string>("ContentHash")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -6126,6 +6130,10 @@ namespace AML.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("LastSourceEventAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("Mcc")
+                        .HasMaxLength(4)
+                        .HasColumnType("nvarchar(4)");
+
                     b.Property<long?>("MerchantCustomerId")
                         .HasColumnType("bigint");
 
@@ -6174,6 +6182,14 @@ namespace AML.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("RealtimeDecisionId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<decimal?>("ReceiverBalanceAfter")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<decimal?>("ReceiverBalanceBefore")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
                     b.Property<long?>("ReceiverCustomerId")
                         .HasColumnType("bigint");
 
@@ -6196,6 +6212,14 @@ namespace AML.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
+
+                    b.Property<decimal?>("SenderBalanceAfter")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<decimal?>("SenderBalanceBefore")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
 
                     b.Property<long?>("SenderCustomerId")
                         .HasColumnType("bigint");
@@ -6229,6 +6253,10 @@ namespace AML.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("SubType")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.Property<long>("TenantId")
                         .HasColumnType("bigint");

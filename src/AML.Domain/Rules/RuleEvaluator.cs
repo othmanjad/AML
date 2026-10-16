@@ -21,6 +21,12 @@ public sealed class RuleTxn
     public string Status { get; init; } = "";
     public string? Channel { get; init; }
     public decimal? Fee { get; init; }
+    public decimal? Commission { get; init; }
+    public string? SubType { get; init; }
+    public string? Mcc { get; init; }
+    /// <summary>Balance of the subject's side immediately before / after the transaction, as reported by the core (transaction currency).</summary>
+    public decimal? BalanceBefore { get; init; }
+    public decimal? BalanceAfter { get; init; }
     public long? SenderCustomerId { get; init; }
     public long? ReceiverCustomerId { get; init; }
     public string? SenderWallet { get; init; }
@@ -452,6 +458,11 @@ public sealed class RuleEvaluator
         "txn.amount" => EffectiveAmount(ctx.Def, t),
         "txn.baseAmount" => EffectiveBase(ctx.Def, t),
         "txn.fee" => t.Fee,
+        "txn.commission" => t.Commission,
+        "txn.subType" => t.SubType,
+        "txn.mcc" => t.Mcc,
+        "txn.balanceBefore" => t.BalanceBefore,
+        "txn.balanceAfter" => t.BalanceAfter,
         "txn.localHour" => (decimal)TimeZoneInfo.ConvertTimeFromUtc(t.TimestampUtc, ctx.Tz).Hour,
         "txn.currency" => t.Currency,
         "txn.type" => t.Type,
@@ -517,9 +528,14 @@ public sealed class RuleEvaluator
         return (last, b[last]);
     }
 
-    /// <summary>Transaction base amount as a percentage of the previous end-of-day balance.</summary>
+    /// <summary>
+    /// Transaction amount as a percentage of the balance before it: the balance reported on the transaction when present
+    /// (same currency), otherwise the previous end-of-day balance (base currency).
+    /// </summary>
     private decimal? BalanceShare(RuleTxn t, EvalContext ctx)
     {
+        if (t.BalanceBefore is { } before)
+            return before > 0 ? Math.Round(EffectiveAmount(ctx.Def, t) / before * 100, 4) : null;
         var b = PreviousBalance(t, ctx);
         var amount = EffectiveBase(ctx.Def, t);
         if (b is not { Balance: > 0 } pb || amount is null) return null;

@@ -40,6 +40,13 @@ public sealed class TransactionMessage
     public decimal? Amount { get; set; }
     public string? Currency { get; set; }
     public decimal? Fee { get; set; }
+    public decimal? Commission { get; set; }
+    public string? SubType { get; set; }
+    public string? Mcc { get; set; }
+    public decimal? SenderBalanceBefore { get; set; }
+    public decimal? SenderBalanceAfter { get; set; }
+    public decimal? ReceiverBalanceBefore { get; set; }
+    public decimal? ReceiverBalanceAfter { get; set; }
     public string? SenderWallet { get; set; }
     public string? ReceiverWallet { get; set; }
     public string? OriginalSourceTransactionId { get; set; }

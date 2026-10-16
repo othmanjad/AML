@@ -151,7 +151,8 @@ public sealed class TransactionQueryService
             transaction = new
             {
                 t.Id, t.SourceSystem, t.SourceTransactionId, t.OriginalReference, t.PayloadHash, t.TransactionType, t.SourceStatus, t.Status, t.Channel, t.Amount, t.Currency,
-                t.Fee, t.BaseAmount, t.BaseCurrency, t.FxRate, t.FxRateDate, t.FxRateVersion, t.FxStatus, t.ReversedAmount, NetAmount = t.Amount - t.ReversedAmount, t.BusinessDate,
+                t.Fee, t.Commission, t.SubType, t.Mcc, t.SenderBalanceBefore, t.SenderBalanceAfter, t.ReceiverBalanceBefore, t.ReceiverBalanceAfter,
+                t.InvoiceNumber, t.InvoiceAmount, t.InvoiceCurrency, t.GoodsCategory, t.BaseAmount, t.BaseCurrency, t.FxRate, t.FxRateDate, t.FxRateVersion, t.FxStatus, t.ReversedAmount, NetAmount = t.Amount - t.ReversedAmount, t.BusinessDate,
                 t.TimestampUtc, t.IngestedAt, t.IngestionRunId, t.DataQualityStatus, t.IsReversal, t.IsRefund, t.OriginalSourceTransactionId, t.OriginalTransactionId,
                 t.SourceCountry, t.DestinationCountry, t.SenderWalletExternalId, t.ReceiverWalletExternalId, t.SenderCustomerId, t.ReceiverCustomerId, t.AgentCustomerId,
                 t.MerchantCustomerId, t.Remarks, t.CopResult, DeviceId = _access.MaskDevice(t.DeviceId), IpAddress = _user.Has(Perm.DevicesUnmask) ? t.IpAddress : (t.IpAddress is null ? null : FieldValueValidator.Mask(t.IpAddress)),

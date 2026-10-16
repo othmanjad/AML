@@ -171,6 +171,10 @@ public sealed class IngestionService
                 problems.Add($"unsupported currency '{m.Currency}' (never defaulted)");
         }
         if (m.InvoiceAmount is < 0) problems.Add("invoiceAmount must not be negative");
+        if (m.Fee is < 0) problems.Add("fee must not be negative");
+        if (m.Commission is < 0) problems.Add("commission must not be negative");
+        if (m.Mcc is { } mcc && !System.Text.RegularExpressions.Regex.IsMatch(mcc.Trim(), "^[0-9]{4}$")) problems.Add("mcc must be a 4-digit merchant category code");
+        if (m.SubType is { Length: > 50 }) problems.Add("subType exceeds 50 characters");
         if (m.InvoiceCurrency is { } ic && ic.Trim().Length != 3) problems.Add("invoiceCurrency must be an ISO 4217 code");
         if (m.InvoiceAmount is not null && string.IsNullOrWhiteSpace(m.InvoiceCurrency)) problems.Add("invoiceCurrency is required with invoiceAmount");
         if (problems.Count > 0) return await DeadLetterAsync(rec, "Validation failed: " + string.Join("; ", problems), ct);
@@ -231,6 +235,8 @@ public sealed class IngestionService
             TenantId = rec.TenantId, SourceSystem = source, SourceTransactionId = m.SourceTransactionId!, OriginalReference = m.OriginalReference,
             PayloadHash = rec.PayloadHash, ContentHash = contentHash, SenderWalletExternalId = m.SenderWallet, ReceiverWalletExternalId = m.ReceiverWallet,
             TransactionType = m.Type!, SourceStatus = m.Status!, Status = normalized, Channel = m.Channel, Amount = m.Amount.Value, Currency = currency, Fee = m.Fee,
+            Commission = m.Commission, SubType = string.IsNullOrWhiteSpace(m.SubType) ? null : m.SubType.Trim(), Mcc = m.Mcc?.Trim(),
+            SenderBalanceBefore = m.SenderBalanceBefore, SenderBalanceAfter = m.SenderBalanceAfter, ReceiverBalanceBefore = m.ReceiverBalanceBefore, ReceiverBalanceAfter = m.ReceiverBalanceAfter,
             BaseCurrency = tenant.BaseCurrency, BaseAmount = conv.BaseAmount, FxRate = conv.RateUsed?.Value ?? (conv.Status == "SameCurrency" ? 1m : null),
             FxRateDate = conv.RateUsed?.EffectiveFrom, FxRateId = conv.RateUsed?.Id, FxRateVersion = conv.RateUsed?.Version, FxStatus = conv.Status,
             BusinessDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(eventUtc, tz)), TimestampUtc = eventUtc, LastSourceEventAt = eventUtc,
@@ -276,6 +282,21 @@ public sealed class IngestionService
             {
                 TenantId = rec.TenantId, IssueType = "MissingLocation", EntityType = "Transaction", EntityId = m.SourceTransactionId,
                 Description = $"{t.Channel} transaction without source country; excluded from country-based monitoring until corrected.", Severity = "Medium", CreatedAt = _clock.UtcNow
+            });
+        }
+        // Reported balances must reconcile with the movement: sender after = before − amount − fee; receiver after = before + amount.
+        var mismatches = new List<string>();
+        if (t.SenderBalanceBefore is { } sb && t.SenderBalanceAfter is { } sa && Math.Abs(sb - t.Amount - (t.Fee ?? 0) - sa) > 0.01m)
+            mismatches.Add($"sender {sb} − {t.Amount} − fee {t.Fee ?? 0} ≠ {sa}");
+        if (t.ReceiverBalanceBefore is { } rb && t.ReceiverBalanceAfter is { } ra && Math.Abs(rb + t.Amount - ra) > 0.01m)
+            mismatches.Add($"receiver {rb} + {t.Amount} ≠ {ra}");
+        if (mismatches.Count > 0 && normalized == TxnStatuses.Completed)
+        {
+            dq.Add("BalanceMismatch");
+            _db.Set<DataQualityIssue>().Add(new DataQualityIssue
+            {
+                TenantId = rec.TenantId, IssueType = "BalanceMismatch", EntityType = "Transaction", EntityId = m.SourceTransactionId,
+                Description = "Reported balances do not reconcile with the transaction: " + string.Join("; ", mismatches) + ".", Severity = "Medium", CreatedAt = _clock.UtcNow
             });
         }
         if (normalized == "Unknown")

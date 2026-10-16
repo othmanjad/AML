@@ -520,7 +520,18 @@
   "metric": "Metric",
   "segmentField": "Segment field",
   "segmentValue": "Segment value",
-  "householdId": "Household ID"
+  "householdId": "Household ID",
+  "subType": "Source transaction code",
+  "mcc": "MCC",
+  "commission": "Commission",
+  "senderBalanceBefore": "Sender balance before",
+  "senderBalanceAfter": "Sender balance after",
+  "receiverBalanceBefore": "Receiver balance before",
+  "receiverBalanceAfter": "Receiver balance after",
+  "invoiceNumber": "Invoice number",
+  "invoiceAmount": "Invoice amount",
+  "invoiceCurrency": "Invoice currency",
+  "goodsCategory": "Goods category"
  },
  "app": {
   "title": "AML Compliance Platform"

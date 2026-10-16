@@ -520,7 +520,18 @@
   "metric": "المؤشر",
   "segmentField": "حقل الشريحة",
   "segmentValue": "قيمة الشريحة",
-  "householdId": "رقم الأسرة"
+  "householdId": "رقم الأسرة",
+  "subType": "رمز الحركة في المصدر",
+  "mcc": "رمز فئة التاجر (MCC)",
+  "commission": "العمولة",
+  "senderBalanceBefore": "رصيد المرسل قبل الحركة",
+  "senderBalanceAfter": "رصيد المرسل بعد الحركة",
+  "receiverBalanceBefore": "رصيد المستلم قبل الحركة",
+  "receiverBalanceAfter": "رصيد المستلم بعد الحركة",
+  "invoiceNumber": "رقم الفاتورة",
+  "invoiceAmount": "مبلغ الفاتورة",
+  "invoiceCurrency": "عملة الفاتورة",
+  "goodsCategory": "فئة البضاعة"
  },
  "v": {
   "Low": "منخفض",

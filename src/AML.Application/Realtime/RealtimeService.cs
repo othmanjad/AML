@@ -31,6 +31,12 @@ public sealed class DecideRequest
     public string Currency { get; set; } = "";
     public string? SenderWallet { get; set; }
     public string? ReceiverWallet { get; set; }
+    public decimal? Fee { get; set; }
+    public decimal? Commission { get; set; }
+    public string? SubType { get; set; }
+    public string? Mcc { get; set; }
+    /// <summary>Sender wallet balance before the transaction (transaction currency), when the core provides it.</summary>
+    public decimal? SenderBalanceBefore { get; set; }
     public string? BeneficiaryName { get; set; }
     public List<string>? CounterpartyNames { get; set; }
     public string? Remarks { get; set; }
@@ -256,7 +262,8 @@ public sealed class RealtimeService
             var txn = new RuleTxn
             {
                 Amount = r.Amount, Currency = r.Currency.ToUpperInvariant(), BaseAmount = conv.BaseAmount, Type = r.TransactionType, Channel = r.Channel, Status = "Pending",
-                SourceCountry = r.SourceCountry, DestinationCountry = r.DestinationCountry, Remarks = r.Remarks, TimestampUtc = now, Direction = "out", FxStatus = conv.Status
+                SourceCountry = r.SourceCountry, DestinationCountry = r.DestinationCountry, Remarks = r.Remarks, TimestampUtc = now, Direction = "out", FxStatus = conv.Status,
+                Fee = r.Fee, Commission = r.Commission, SubType = r.SubType, Mcc = r.Mcc, BalanceBefore = r.SenderBalanceBefore
             };
             if (EvalRealtime(def.Condition, txn, agg, tz))
             {
@@ -301,7 +308,9 @@ public sealed class RealtimeService
         {
             "txn.amount" => t.Amount, "txn.baseAmount" => t.BaseAmount, "txn.currency" => t.Currency, "txn.type" => t.Type, "txn.channel" => t.Channel,
             "txn.sourceCountry" => t.SourceCountry, "txn.destinationCountry" => t.DestinationCountry, "txn.remarks" => t.Remarks,
-            "txn.localHour" => (decimal)TimeZoneInfo.ConvertTimeFromUtc(t.TimestampUtc, tz).Hour, _ => null
+            "txn.localHour" => (decimal)TimeZoneInfo.ConvertTimeFromUtc(t.TimestampUtc, tz).Hour,
+            "txn.fee" => t.Fee, "txn.commission" => t.Commission, "txn.subType" => t.SubType, "txn.mcc" => t.Mcc, "txn.balanceBefore" => t.BalanceBefore,
+            "txn.balanceSharePct" => t.BalanceBefore is > 0 ? Math.Round(t.Amount / t.BalanceBefore.Value * 100, 4) : null, _ => null
         };
         return RuleEvaluator.Compare(actual, n.Operator!, n.Value!.Value);
     }

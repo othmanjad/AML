@@ -133,6 +133,7 @@ public sealed class AmlDbContext : DbContext, IAmlDbContext
             S(e.Property(x => x.OriginalSourceTransactionId), 100); S(e.Property(x => x.Currency), 3); S(e.Property(x => x.BaseCurrency), 3); S(e.Property(x => x.Status), 30);
             S(e.Property(x => x.TransactionType), 50); S(e.Property(x => x.Channel), 50); S(e.Property(x => x.DeviceId), 200); S(e.Property(x => x.SenderWalletExternalId), 100);
             S(e.Property(x => x.ReceiverWalletExternalId), 100); S(e.Property(x => x.SourceCountry), 2); S(e.Property(x => x.DestinationCountry), 2);
+            S(e.Property(x => x.SubType), 50); S(e.Property(x => x.Mcc), 4);
             S(e.Property(x => x.InvoiceNumber), 100); S(e.Property(x => x.InvoiceCurrency), 3); S(e.Property(x => x.GoodsCategory), 100);
             e.Property(x => x.FxRate).HasPrecision(19, 8);
             e.Ignore(x => x.NetAmount);

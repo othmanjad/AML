@@ -23,6 +23,10 @@ OpenAPI/Swagger UI is served at `/swagger` in the Development environment only.
 // → { runId, batchId, status, received, processed, duplicates, conflicts, errors, correlationId, records: [{ sourceTransactionId, status, transactionId, error, recordId }] }
 
 // Transactions may also carry trade data: "invoiceNumber", "invoiceAmount", "invoiceCurrency" (required with invoiceAmount), "goodsCategory".
+// Full transaction details (all optional, recommended): "subType" (source transaction code, ≤ 50), "mcc" (4 digits), "fee" (customer fee),
+// "commission" (agent/merchant commission), "senderBalanceBefore", "senderBalanceAfter", "receiverBalanceBefore", "receiverBalanceAfter"
+// (wallet balances around the transaction, transaction currency). Completed transactions whose balances do not reconcile
+// (sender: before − amount − fee = after; receiver: before + amount = after, ±0.01) are accepted and raise a BalanceMismatch data-quality item.
 
 // POST /api/integrations/{source}/balances — end-of-day wallet balances (same client-credential contract)
 { "balances": [{ "walletId": "W1", "businessDate": "2026-10-14", "balance": 120.50, "currency": "JOD" }] }
@@ -53,6 +57,7 @@ Allowed operators: `eq neq gt gte lt lte between in notIn contains multipleOf in
 | `benchmarkDeviation` | `(subject metric − benchmark) ÷ benchmark × 100` where the metric is a ratio (`numerator`/`denominator`, %) or the filtered sum/count, and the benchmark is the `benchmark` metric configured for the customer's segment (`/api/admin/benchmarks`) |
 | `valueBy` | Threshold chosen by a text attribute: `{ "field": "customer.riskLevel", "values": { "High": 3000 } }`; `value` is the default. Works on numeric field conditions and aggregates (`eq neq gt gte lt lte`); the chosen threshold is written to the evidence |
 | `inList` / `notInList` | Text field against a maintained lookup list: `"CATEGORY"` or `"CATEGORY:ATTRIBUTE"`, e.g. `{ "field": "txn.destinationCountry", "operator": "inList", "value": "COUNTRY:HighRisk" }` |
+| Transaction details | `txn.subType`, `txn.mcc`, `txn.fee`, `txn.commission`, `txn.balanceBefore` / `txn.balanceAfter` (the subject's side: sender for outgoing, receiver for incoming). `txn.balanceSharePct` uses `balanceBefore` when reported, otherwise the previous end-of-day balance |
 | Trade data | `txn.invoiceAmount`, `txn.hasInvoice`, `txn.goodsCategory`, `txn.invoiceVariancePct` ((amount − invoice) ÷ invoice × 100, same currency only); country risk `txn.sourceCountryRisk` / `txn.destinationCountryRisk` (COUNTRY lookup attribute: HighRisk, Elevated, Standard) |
 | `ratio` | Without `denominator` the numerator is a subset of the window; with one, numerator and denominator filters are applied independently |
 | Fields | `txn.*` (incl. `txn.isOwnAccount`, `txn.isLinkedParty`, `txn.loginCountryMismatch`), `customer.*` (incl. `customer.accountAgeDays`, `customer.age`), `profile.*`, `field:CODE`, and `counterparty.*` (the other resolved party, e.g. `counterparty.isPep`, `counterparty.field:CODE`) |
