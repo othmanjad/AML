@@ -55,3 +55,21 @@ docker compose down -v                                 # حذف كل شيء بم
 - لا يُرسل النظام أي بلاغ أو أمر تجميد إلى جهات حقيقية: محوّل النظام البنكي في هذا الإعداد محاكٍ (`Integrations__CoreAdapter=Mock`) وإرسال البلاغات يدوي.
 - القيم التنظيمية (الحدود والمدد) أمثلة تنتظر تأكيد فريق الامتثال.
 - `MSSQL_PID=Developer` مجاني للاختبار فقط؛ للإنتاج استخدم ترخيص Standard/Enterprise أو SQL Server خارجي (غيّر `ConnectionStrings__Aml`).
+
+## التشغيل على Ubuntu Server (22.04 / 24.04 / 26.04 LTS)
+على Linux تعمل الحاويات مباشرة دون WSL، وهو الخيار الأبسط. يلزم معالج x86-64 (Intel/AMD) لأن صورة SQL Server لا تدعم ARM.
+```bash
+# 1) تثبيت Docker Engine من مستودع Docker الرسمي
+sudo apt-get update && sudo apt-get install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER && newgrp docker
+
+# 2) المشروع والأسرار والتشغيل
+git clone https://github.com/othmanjad/aml.git ~/aml && cd ~/aml && git checkout claude/aml-platform-implementation
+./deploy/docker/generate-env.sh http://SERVER-IP:8080
+docker compose up -d --build
+sudo ufw allow 8080/tcp   # إن كان جدار الحماية مفعّلاً
+```
